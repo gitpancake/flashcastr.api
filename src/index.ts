@@ -1,6 +1,8 @@
 import { PrismaClient } from "@prisma/client";
 import { ApolloServer, gql } from "apollo-server";
-import neynarClient from "./utils/neynar";
+import { FlashcastrFlashesDb } from "./utils/mongodb/flashcastr";
+import { Users } from "./utils/mongodb/users";
+import SignupTask from "./utils/tasks/signup";
 
 const prisma = new PrismaClient();
 
@@ -190,9 +192,10 @@ const resolvers = {
       }
       if (search) {
         // Case-insensitive search on flash.city or flash.player
-        where.OR = [{ flash: { is: { city: { contains: search, mode: "insensitive" } } } }, { flash: { is: { player: { contains: search, mode: "insensitive" } } } }];
+        where.OR = [{ flash: { city: { contains: search, mode: "insensitive" } } }, { flash: { player: { contains: search, mode: "insensitive" } } }];
       }
-      return prisma.flashes.findMany({
+
+      return await prisma.flashes.findMany({
         where: Object.keys(where).length ? where : undefined,
         skip: (page - 1) * limit,
         take: limit,
@@ -201,24 +204,33 @@ const resolvers = {
             timestamp: "desc",
           },
         },
+        select: {
+          flash: true,
+          user: true,
+          castHash: true,
+        },
       });
     },
   },
   Mutation: {
     setUserAutoCast: async (_: any, args: { fid: number; auto_cast: boolean }, context: any) => {
       const apiKey = context.req?.headers["x-api-key"] || context.req?.headers["X-API-KEY"];
+
       const validApiKey = process.env.API_KEY;
+
       if (!apiKey || apiKey !== validApiKey) {
         throw new Error("Unauthorized: Invalid API key");
       }
 
-      await prisma.users.updateMany({
-        where: { fid: args.fid },
-        data: { auto_cast: args.auto_cast },
-      });
+      try {
+        await new Users().updateDocument({ fid: args.fid }, { $set: { auto_cast: args.auto_cast } });
+      } catch (err) {
+        console.log(err);
+      }
 
       // Return the updated user (fetch after update)
       const updatedUser = await prisma.users.findFirst({ where: { fid: args.fid } });
+
       if (!updatedUser) throw new Error("User not found");
       return updatedUser;
     },
@@ -228,38 +240,41 @@ const resolvers = {
       if (!apiKey || apiKey !== validApiKey) {
         throw new Error("Unauthorized: Invalid API key");
       }
-      const deletedUser = await prisma.users.deleteMany({
-        where: { fid: args.fid },
-      });
-
-      await prisma.flashes.deleteMany({
-        where: { user: { is: { fid: args.fid } } },
-      });
-      if (deletedUser.count === 0) {
-        throw new Error("User not found");
+      try {
+        await new Users().deleteDocument({ fid: args.fid });
+        await new FlashcastrFlashesDb().deleteMany({ "user.fid": args.fid });
+      } catch (err) {
+        console.log(err);
+        return { success: false, message: "User deletion failed" };
       }
+
       return { success: true, message: "User deleted successfully" };
     },
     signup: async (_: any, args: { fid: number; signer_uuid: string; username: string }, context: any) => {
+      console.log("signup");
       const apiKey = context.req?.headers["x-api-key"] || context.req?.headers["X-API-KEY"];
       const validApiKey = process.env.API_KEY;
+
+      console.log({ apiKey, validApiKey });
+
       if (!apiKey || apiKey !== validApiKey) {
         throw new Error("Unauthorized: Invalid API key");
       }
 
-      const users = await prisma.users.create({
-        data: {
+      try {
+        console.log("signup try");
+
+        new SignupTask().handle({
           fid: args.fid,
           signer_uuid: args.signer_uuid,
           username: args.username,
-          auto_cast: true,
-          historic_sync: false,
-        },
-      });
+        });
 
-      const {
-        users: [neynarUser],
-      } = await neynarClient.fetchBulkUsers({ fids: [args.fid] });
+        return { success: true, message: "User created successfully" };
+      } catch (err) {
+        console.log(err);
+        return { success: false, message: "User creation failed" };
+      }
     },
   },
 };

@@ -8,7 +8,7 @@ datasource db {
 }
 
 type FlashesFlash {
-  id          String  @map("_id") @db.ObjectId
+  id          String
   city        String
   flash_count String
   flash_id    Int
