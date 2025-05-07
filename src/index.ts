@@ -113,7 +113,7 @@ const typeDefs = gql`
     users(username: String, fid: Int): [User!]!
     flashes(fid: Int, username: String): [Flash!]!
     flashesSummary(fid: Int!, page: Int = 1, limit: Int = 20): FlashesSummary!
-    flashesAll(page: Int = 1, limit: Int = 40): [Flash!]!
+    flashesAll(page: Int = 1, limit: Int = 40, fid: Int, search: String): [Flash!]!
   }
 `;
 
@@ -165,9 +165,18 @@ const resolvers = {
       const cities = Array.from(new Set(allFlashes.map((f) => f.flash?.city).filter(Boolean)));
       return { flashes, flashCount, cities };
     },
-    flashesAll: async (_: any, args: { page?: number; limit?: number }) => {
-      const { page = 1, limit = 40 } = args;
+    flashesAll: async (_: any, args: { page?: number; limit?: number; fid?: number; search?: string }) => {
+      const { page = 1, limit = 40, fid, search } = args;
+      const where: any = {};
+      if (typeof fid === "number") {
+        where.user = { is: { fid } };
+      }
+      if (search) {
+        // Case-insensitive search on flash.city or flash.player
+        where.OR = [{ flash: { is: { city: { contains: search, mode: "insensitive" } } } }, { flash: { is: { player: { contains: search, mode: "insensitive" } } } }];
+      }
       return prisma.flashes.findMany({
+        where: Object.keys(where).length ? where : undefined,
         skip: (page - 1) * limit,
         take: limit,
       });
