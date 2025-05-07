@@ -115,6 +115,10 @@ const typeDefs = gql`
     flashesSummary(fid: Int!, page: Int = 1, limit: Int = 20): FlashesSummary!
     flashesAll(page: Int = 1, limit: Int = 40, fid: Int, search: String): [Flash!]!
   }
+
+  type Mutation {
+    setUserAutoCast(fid: Int!, auto_cast: Boolean!): User!
+  }
 `;
 
 const resolvers = {
@@ -182,12 +186,30 @@ const resolvers = {
       });
     },
   },
+  Mutation: {
+    setUserAutoCast: async (_: any, args: { fid: number; auto_cast: boolean }, context: any) => {
+      const apiKey = context.req?.headers["x-api-key"] || context.req?.headers["X-API-KEY"];
+      const validApiKey = process.env.API_KEY;
+      if (!apiKey || apiKey !== validApiKey) {
+        throw new Error("Unauthorized: Invalid API key");
+      }
+      const user = await prisma.users.updateMany({
+        where: { fid: args.fid },
+        data: { auto_cast: args.auto_cast },
+      });
+      // Return the updated user (fetch after update)
+      const updatedUser = await prisma.users.findFirst({ where: { fid: args.fid } });
+      if (!updatedUser) throw new Error("User not found");
+      return updatedUser;
+    },
+  },
 };
 
 const server = new ApolloServer({
   typeDefs,
   resolvers,
   introspection: true,
+  context: ({ req }) => ({ req }),
 });
 
 server.listen({ port: 4000 }).then(({ url }) => {
