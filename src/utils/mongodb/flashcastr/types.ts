@@ -1,5 +1,5 @@
 import { User as NeynarUser } from "@neynar/nodejs-sdk/build/api";
-import { Flash } from "../flashes/types";
+import { Flash } from "../../api.invaders.fun/flashes";
 
 export interface Flashcastr {
   flash: Flash;
