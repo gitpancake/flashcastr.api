@@ -109,6 +109,7 @@ model users {
   id            String  @id @default(auto()) @map("_id") @db.ObjectId
   auto_cast     Boolean
   fid           Int
+  signer_uuid   String
   historic_sync Boolean
   username      String
 

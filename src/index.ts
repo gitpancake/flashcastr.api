@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { ApolloServer, gql } from "apollo-server";
+import neynarClient from "./utils/neynar";
 
 const prisma = new PrismaClient();
 
@@ -118,6 +119,18 @@ const typeDefs = gql`
 
   type Mutation {
     setUserAutoCast(fid: Int!, auto_cast: Boolean!): User!
+    deleteUser(fid: Int!): DeleteUserResult!
+    signup(fid: Int!, signer_uuid: String!, username: String!): SignupResult!
+  }
+
+  type SignupResult {
+    success: Boolean!
+    message: String
+  }
+
+  type DeleteUserResult {
+    success: Boolean!
+    message: String
   }
 `;
 
@@ -183,6 +196,11 @@ const resolvers = {
         where: Object.keys(where).length ? where : undefined,
         skip: (page - 1) * limit,
         take: limit,
+        orderBy: {
+          flash: {
+            timestamp: "desc",
+          },
+        },
       });
     },
   },
@@ -193,14 +211,55 @@ const resolvers = {
       if (!apiKey || apiKey !== validApiKey) {
         throw new Error("Unauthorized: Invalid API key");
       }
-      const user = await prisma.users.updateMany({
+
+      await prisma.users.updateMany({
         where: { fid: args.fid },
         data: { auto_cast: args.auto_cast },
       });
+
       // Return the updated user (fetch after update)
       const updatedUser = await prisma.users.findFirst({ where: { fid: args.fid } });
       if (!updatedUser) throw new Error("User not found");
       return updatedUser;
+    },
+    deleteUser: async (_: any, args: { fid: number }, context: any) => {
+      const apiKey = context.req?.headers["x-api-key"] || context.req?.headers["X-API-KEY"];
+      const validApiKey = process.env.API_KEY;
+      if (!apiKey || apiKey !== validApiKey) {
+        throw new Error("Unauthorized: Invalid API key");
+      }
+      const deletedUser = await prisma.users.deleteMany({
+        where: { fid: args.fid },
+      });
+
+      await prisma.flashes.deleteMany({
+        where: { user: { is: { fid: args.fid } } },
+      });
+      if (deletedUser.count === 0) {
+        throw new Error("User not found");
+      }
+      return { success: true, message: "User deleted successfully" };
+    },
+    signup: async (_: any, args: { fid: number; signer_uuid: string; username: string }, context: any) => {
+      const apiKey = context.req?.headers["x-api-key"] || context.req?.headers["X-API-KEY"];
+      const validApiKey = process.env.API_KEY;
+      if (!apiKey || apiKey !== validApiKey) {
+        throw new Error("Unauthorized: Invalid API key");
+      }
+
+      const users = await prisma.users.create({
+        data: {
+          fid: args.fid,
+          signer_uuid: args.signer_uuid,
+          username: args.username,
+          auto_cast: true,
+          historic_sync: false,
+        },
+      });
+
+      const {
+        users: [neynarUser],
+      } = await neynarClient.fetchBulkUsers({ fids: [args.fid] });
     },
   },
 };
