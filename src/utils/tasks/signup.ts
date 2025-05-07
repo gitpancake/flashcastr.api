@@ -7,14 +7,6 @@ import neynarClient from "../neynar";
 
 class SignupTask {
   public async handle({ fid, signer_uuid, username }: { fid: number; signer_uuid: string; username: string }): Promise<void> {
-    console.log({
-      fid,
-      signer_uuid,
-      username,
-    });
-
-    console.log("Inserting user");
-
     await new Users().insert({
       fid,
       signer_uuid,
@@ -23,13 +15,9 @@ class SignupTask {
       historic_sync: false,
     });
 
-    console.log("Fetching Neynar user");
-
     const {
       users: [neynarUser],
     } = await neynarClient.fetchBulkUsers({ fids: [fid] });
-
-    console.log("Fetching flashes");
 
     function escapeRegex(str: string) {
       return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -49,8 +37,6 @@ class SignupTask {
       doesHaveNext = hasNext;
     } while (doesHaveNext);
 
-    console.log("Inserting flashes");
-
     if (!flashes.length) {
       return;
     }
@@ -65,11 +51,7 @@ class SignupTask {
       });
     }
 
-    console.log("Inserting flashes into database");
-
     await new FlashcastrFlashesDb().insertMany(docs);
-
-    console.log("Done");
   }
 }
 
