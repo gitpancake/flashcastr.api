@@ -103,9 +103,17 @@ const typeDefs = gql`
     username: String
   }
 
+  type FlashesSummary {
+    flashes: [Flash!]!
+    flashCount: Int!
+    cities: [String!]!
+  }
+
   type Query {
     users(username: String, fid: Int): [User!]!
     flashes(fid: Int, username: String): [Flash!]!
+    flashesSummary(fid: Int!, page: Int = 1, limit: Int = 20): FlashesSummary!
+    flashesAll(page: Int = 1, limit: Int = 40): [Flash!]!
   }
 `;
 
@@ -137,6 +145,32 @@ const resolvers = {
           : undefined,
       });
       return flashes;
+    },
+    flashesSummary: async (_: any, args: { fid: number; page?: number; limit?: number }) => {
+      const { fid, page = 1, limit = 20 } = args;
+      const where = { user: { is: { fid } } };
+      // Paginated flashes
+      const flashes = await prisma.flashes.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+      });
+      // Count
+      const flashCount = await prisma.flashes.count({ where });
+      // Distinct cities: fetch all flashes for the user and extract unique city names
+      const allFlashes = await prisma.flashes.findMany({
+        where,
+        select: { flash: { select: { city: true } } },
+      });
+      const cities = Array.from(new Set(allFlashes.map((f) => f.flash?.city).filter(Boolean)));
+      return { flashes, flashCount, cities };
+    },
+    flashesAll: async (_: any, args: { page?: number; limit?: number }) => {
+      const { page = 1, limit = 40 } = args;
+      return prisma.flashes.findMany({
+        skip: (page - 1) * limit,
+        take: limit,
+      });
     },
   },
 };
