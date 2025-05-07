@@ -1,0 +1,116 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+type FlashesFlash {
+  id          String  @map("_id") @db.ObjectId
+  city        String
+  flash_count String
+  flash_id    Int
+  img         String
+  player      String
+  posted      Boolean?
+  text        String
+  timestamp   Float
+}
+
+type FlashesUser {
+  custody_address    String
+  display_name       String
+  experimental       FlashesUserExperimental
+  fid                Int
+  follower_count     Int
+  following_count    Int
+  object             String
+  pfp_url            String
+  power_badge        Boolean
+  profile            FlashesUserProfile
+  score              Float
+  username           String
+  verifications      String[]
+  /// Could not determine type: the field only had null or empty values in the sample set.
+  verified_accounts  Json?
+  verified_addresses FlashesUserVerifiedAddresses
+}
+
+type FlashesUserExperimental {
+  deprecation_notice String
+  neynar_user_score  Float
+}
+
+type FlashesUserProfile {
+  bio FlashesUserProfileBio
+}
+
+type FlashesUserProfileBio {
+  mentioned_channels        FlashesUserProfileBioMentionedChannels[]
+  mentioned_channels_ranges FlashesUserProfileBioMentionedChannelsRanges[]
+  mentioned_profiles        FlashesUserProfileBioMentionedProfiles[]
+  mentioned_profiles_ranges FlashesUserProfileBioMentionedProfilesRanges[]
+  text                      String
+}
+
+type FlashesUserProfileBioMentionedChannels {
+  id        String
+  image_url String
+  name      String
+  object    String
+}
+
+type FlashesUserProfileBioMentionedChannelsRanges {
+  end   Int
+  start Int
+}
+
+type FlashesUserProfileBioMentionedProfiles {
+  custody_address String
+  display_name    String
+  fid             Int
+  object          String
+  pfp_url         String
+  username        String
+}
+
+type FlashesUserProfileBioMentionedProfilesRanges {
+  end   Int
+  start Int
+}
+
+type FlashesUserVerifiedAddresses {
+  eth_addresses String[]
+  primary       FlashesUserVerifiedAddressesPrimary
+  /// Could not determine type: the field only had null or empty values in the sample set.
+  sol_addresses Json?
+}
+
+type FlashesUserVerifiedAddressesPrimary {
+  eth_address String
+  /// Could not determine type: the field only had null or empty values in the sample set.
+  sol_address Json?
+}
+
+model flashes {
+  id       String       @id @default(auto()) @map("_id") @db.ObjectId
+  /// Could not determine type: the field only had null or empty values in the sample set.
+  castHash Json?
+  flash    FlashesFlash
+  user     FlashesUser
+
+  @@unique([flash.flash_id], map: "flash.flash_id_1")
+  @@index([user.fid(sort: Desc)], map: "user.fid_-1")
+}
+
+model users {
+  id            String  @id @default(auto()) @map("_id") @db.ObjectId
+  auto_cast     Boolean
+  fid           Int
+  historic_sync Boolean
+  username      String
+
+  @@index([fid(sort: Desc)], map: "fid_-1")
+}
