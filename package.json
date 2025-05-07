@@ -2,6 +2,9 @@
     "name": "flashcastr-api",
     "version": "1.0.0",
     "main": "dist/index.js",
+    "engines": {
+        "node": ">=19.9.0"
+    },
     "scripts": {
         "dev": "ts-node-dev src/index.ts",
         "build": "tsc",
