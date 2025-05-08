@@ -284,6 +284,7 @@ const server = new ApolloServer({
   resolvers,
   introspection: true,
   context: ({ req }) => ({ req }),
+  persistedQueries: false,
 });
 
 server.listen({ port: 4000 }).then(({ url }) => {
