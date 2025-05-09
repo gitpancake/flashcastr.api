@@ -1,6 +1,6 @@
-import { Collection, UpdateFilter, WithId } from "mongodb";
+import { Collection, UpdateFilter } from "mongodb";
 import { Mongo } from "../connector";
-import { User, UserWithoutSigner } from "./types";
+import { User } from "./types";
 
 export class FlashcastrUsers extends Mongo<User> {
   constructor() {
@@ -8,14 +8,6 @@ export class FlashcastrUsers extends Mongo<User> {
       dbName: "flashcastr",
       collectionName: "users",
     });
-  }
-
-  public async onConnect(): Promise<void> {
-    await this.collection.createIndex({ fid: -1 });
-  }
-
-  public async getExcludingSigner(filter: Partial<User>): Promise<WithId<UserWithoutSigner> | null> {
-    return this.execute(async (collection) => await collection.findOne(filter, { projection: { signer_uuid: 0 } }));
   }
 
   public async insert(user: User): Promise<string> {
