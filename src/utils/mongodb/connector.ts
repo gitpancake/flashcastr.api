@@ -7,6 +7,7 @@ config({
 
 // ✅ Reuse global singleton (safe in serverless or Node context)
 let mongoClient: MongoClient | null = null;
+const connectedCollections = new Set<string>();
 
 export abstract class Mongo<T extends Document> {
   protected db!: Db;
@@ -29,11 +30,18 @@ export abstract class Mongo<T extends Document> {
   }
 
   public async connect(): Promise<void> {
-    console.log(`Connecting to ${this.options.dbName}.${this.options.collectionName}...`);
+    const cacheKey = `${this.options.dbName}.${this.options.collectionName}`;
+
+    // Prevent reconnecting and re-initializing the same collection
+    if (connectedCollections.has(cacheKey)) return;
+
+    console.log(`Connecting to ${cacheKey}...`);
 
     const client = await this.getClient();
     this.db = client.db(this.options.dbName);
     this.collection = this.db.collection<T>(this.options.collectionName);
+
+    connectedCollections.add(cacheKey);
   }
 
   protected async execute<R>(fn: (col: Collection<T>) => Promise<R>): Promise<R> {
