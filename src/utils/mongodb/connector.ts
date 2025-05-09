@@ -29,7 +29,7 @@ export abstract class Mongo<T extends Document> {
   }
 
   public async connect(): Promise<void> {
-    console.log(`Connecting to ${this.options.dbName}...`);
+    console.log(`Connecting to ${this.options.dbName}.${this.options.collectionName}...`);
 
     const client = await this.getClient();
     this.db = client.db(this.options.dbName);
