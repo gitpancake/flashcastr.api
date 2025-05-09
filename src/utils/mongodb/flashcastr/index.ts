@@ -2,7 +2,7 @@ import { DeleteResult, Filter, MongoBulkWriteError, WithId } from "mongodb";
 import { Mongo } from "../connector";
 import { Flashcastr } from "./types";
 
-export class FlashcastrFlashesDb extends Mongo<Flashcastr> {
+export class FlashcastrFlashes extends Mongo<Flashcastr> {
   constructor() {
     super({
       dbName: "flashcastr",

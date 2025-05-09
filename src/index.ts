@@ -1,7 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { ApolloServer, gql } from "apollo-server";
-import { FlashcastrFlashesDb } from "./utils/mongodb/flashcastr";
-import { Users } from "./utils/mongodb/users";
+import { FlashcastrFlashes } from "./utils/mongodb/flashcastr";
+import { FlashcastrUsers } from "./utils/mongodb/users";
 import SignupTask from "./utils/tasks/signup";
 
 const prisma = new PrismaClient();
@@ -223,7 +223,7 @@ const resolvers = {
       }
 
       try {
-        await new Users().updateDocument({ fid: args.fid }, { $set: { auto_cast: args.auto_cast } });
+        await new FlashcastrUsers().updateDocument({ fid: args.fid }, { $set: { auto_cast: args.auto_cast } });
       } catch (err) {
         console.log(err);
       }
@@ -241,8 +241,8 @@ const resolvers = {
         throw new Error("Unauthorized: Invalid API key");
       }
       try {
-        await new Users().deleteDocument({ fid: args.fid });
-        await new FlashcastrFlashesDb().deleteMany({ "user.fid": args.fid });
+        await new FlashcastrUsers().deleteDocument({ fid: args.fid });
+        await new FlashcastrFlashes().deleteMany({ "user.fid": args.fid });
       } catch (err) {
         console.log(err);
         return { success: false, message: "User deletion failed" };
@@ -287,6 +287,9 @@ const server = new ApolloServer({
   persistedQueries: false,
 });
 
-server.listen({ port: 4000 }).then(({ url }) => {
+server.listen({ port: 4000 }).then(async ({ url }) => {
+  await new FlashcastrUsers().connect();
+  await new FlashcastrFlashes().connect();
+
   console.log(`🚀 Server ready at ${url}`);
 });

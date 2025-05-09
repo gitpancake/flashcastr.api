@@ -1,13 +1,13 @@
 import { Flash, FlashesApi } from "../api.invaders.fun/flashes";
-import { FlashcastrFlashesDb } from "../mongodb/flashcastr";
+import { FlashcastrFlashes } from "../mongodb/flashcastr";
 import { Flashcastr } from "../mongodb/flashcastr/types";
 
-import { Users } from "../mongodb/users";
+import { FlashcastrUsers } from "../mongodb/users";
 import neynarClient from "../neynar";
 
 class SignupTask {
   public async handle({ fid, signer_uuid, username }: { fid: number; signer_uuid: string; username: string }): Promise<void> {
-    await new Users().insert({
+    await new FlashcastrUsers().insert({
       fid,
       signer_uuid,
       username,
@@ -51,7 +51,7 @@ class SignupTask {
       });
     }
 
-    await new FlashcastrFlashesDb().insertMany(docs);
+    await new FlashcastrFlashes().insertMany(docs);
   }
 }
 

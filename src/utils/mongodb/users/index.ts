@@ -2,7 +2,7 @@ import { Collection, UpdateFilter, WithId } from "mongodb";
 import { Mongo } from "../connector";
 import { User, UserWithoutSigner } from "./types";
 
-export class Users extends Mongo<User> {
+export class FlashcastrUsers extends Mongo<User> {
   constructor() {
     super({
       dbName: "flashcastr",
