@@ -33,13 +33,10 @@ export class FlashesApi extends BaseApi {
         query Flashes($offset: Int, $limit: Int, $player: String) {
           flashes(offset: $offset, limit: $limit, player: $player) {
             items {
-              id
               city
-              flash_count
               flash_id
               img
               player
-              posted
               text
               timestamp
             }

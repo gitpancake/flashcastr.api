@@ -1,20 +1,12 @@
 import { Flash, FlashesApi } from "../api.invaders.fun/flashes";
-import { FlashcastrFlashes } from "../mongodb/flashcastr";
-import { Flashcastr } from "../mongodb/flashcastr/types";
+import { PostgresFlashcastrFlashes } from "../database/flashcastr";
+import { FlashcastrFlash } from "../database/flashcastr/types";
 
-import { FlashcastrUsers } from "../mongodb/users";
+import { PostgresFlashcastrUsers } from "../database/users";
 import neynarClient from "../neynar";
 
 class SignupTask {
   public async handle({ fid, signer_uuid, username }: { fid: number; signer_uuid: string; username: string }): Promise<void> {
-    await new FlashcastrUsers().insert({
-      fid,
-      signer_uuid,
-      username,
-      auto_cast: true,
-      historic_sync: false,
-    });
-
     const {
       users: [neynarUser],
     } = await neynarClient.fetchBulkUsers({ fids: [fid] });
@@ -41,17 +33,26 @@ class SignupTask {
       return;
     }
 
-    const docs: Flashcastr[] = [];
+    const docs: FlashcastrFlash[] = [];
 
     for (const flash of flashes) {
       docs.push({
-        flash,
-        user: neynarUser,
-        castHash: null,
+        flash_id: flash.flash_id,
+        user_fid: fid,
+        user_username: username,
+        user_pfp_url: neynarUser.pfp_url ?? "",
+        cast_hash: null,
       });
     }
 
-    await new FlashcastrFlashes().insertMany(docs);
+    await new PostgresFlashcastrUsers().insert({
+      fid,
+      signer_uuid,
+      username,
+      auto_cast: true,
+    });
+
+    await new PostgresFlashcastrFlashes().insertMany(docs);
   }
 }
 

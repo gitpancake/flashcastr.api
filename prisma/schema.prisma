@@ -3,115 +3,50 @@ generator client {
 }
 
 datasource db {
-  provider = "mongodb"
+  provider = "postgres"
   url      = env("DATABASE_URL")
 }
 
-type FlashesFlash {
-  id          String
-  city        String
-  flash_count String
-  flash_id    Int
-  img         String
-  player      String
-  posted      Boolean?
-  text        String
-  timestamp   Float
+model flashcastr_flashes {
+  id               Int              @id @default(autoincrement())
+  flash_id         BigInt
+  user_fid         Int
+  user_username    String?
+  user_pfp_url     String?
+  cast_hash        String?
+  flashes          flashes          @relation(fields: [flash_id], references: [flash_id], onUpdate: NoAction)
+  flashcastr_users flashcastr_users @relation(fields: [user_fid], references: [fid], onUpdate: NoAction)
+
+  @@index([cast_hash], map: "idx_flashcastr_cast_hash")
+  @@index([flash_id], map: "idx_flashcastr_flash_id")
+  @@index([user_fid], map: "idx_flashcastr_user_fid")
 }
 
-type FlashesUser {
-  custody_address    String
-  display_name       String
-  experimental       FlashesUserExperimental
-  fid                Int
-  follower_count     Int
-  following_count    Int
-  object             String
-  pfp_url            String
-  power_badge        Boolean
-  profile            FlashesUserProfile
-  score              Float
-  username           String
-  verifications      String[]
-  /// Could not determine type: the field only had null or empty values in the sample set.
-  verified_accounts  Json?
-  verified_addresses FlashesUserVerifiedAddresses
-}
+model flashcastr_users {
+  fid                Int                  @id
+  username           String?
+  signer_uuid        String?
+  auto_cast          Boolean?
+  flashcastr_flashes flashcastr_flashes[]
 
-type FlashesUserExperimental {
-  deprecation_notice String
-  neynar_user_score  Float
-}
-
-type FlashesUserProfile {
-  bio FlashesUserProfileBio
-}
-
-type FlashesUserProfileBio {
-  mentioned_channels        FlashesUserProfileBioMentionedChannels[]
-  mentioned_channels_ranges FlashesUserProfileBioMentionedChannelsRanges[]
-  mentioned_profiles        FlashesUserProfileBioMentionedProfiles[]
-  mentioned_profiles_ranges FlashesUserProfileBioMentionedProfilesRanges[]
-  text                      String
-}
-
-type FlashesUserProfileBioMentionedChannels {
-  id        String
-  image_url String
-  name      String
-  object    String
-}
-
-type FlashesUserProfileBioMentionedChannelsRanges {
-  end   Int
-  start Int
-}
-
-type FlashesUserProfileBioMentionedProfiles {
-  custody_address String
-  display_name    String
-  fid             Int
-  object          String
-  pfp_url         String
-  username        String
-}
-
-type FlashesUserProfileBioMentionedProfilesRanges {
-  end   Int
-  start Int
-}
-
-type FlashesUserVerifiedAddresses {
-  eth_addresses String[]
-  primary       FlashesUserVerifiedAddressesPrimary
-  /// Could not determine type: the field only had null or empty values in the sample set.
-  sol_addresses Json?
-}
-
-type FlashesUserVerifiedAddressesPrimary {
-  eth_address String
-  /// Could not determine type: the field only had null or empty values in the sample set.
-  sol_address Json?
+  @@index([signer_uuid], map: "idx_flashcastr_users_signer_uuid")
+  @@index([username], map: "idx_flashcastr_users_username")
 }
 
 model flashes {
-  id       String       @id @default(auto()) @map("_id") @db.ObjectId
-  /// Could not determine type: the field only had null or empty values in the sample set.
-  castHash Json?
-  flash    FlashesFlash
-  user     FlashesUser
+  flash_id           BigInt               @id @unique(map: "idx_flashes_flash_id")
+  city               String?
+  player             String?
+  img                String?
+  text               String?
+  timestamp          DateTime?            @db.Timestamp(6)
+  flash_count        String?
+  flashcastr_flashes flashcastr_flashes[]
 
-  @@unique([flash.flash_id], map: "flash.flash_id_1")
-  @@index([user.fid(sort: Desc)], map: "user.fid_-1")
-}
-
-model users {
-  id            String  @id @default(auto()) @map("_id") @db.ObjectId
-  auto_cast     Boolean
-  fid           Int
-  signer_uuid   String
-  historic_sync Boolean
-  username      String
-
-  @@index([fid(sort: Desc)], map: "fid_-1")
+  @@index([city], map: "idx_flashes_city")
+  @@index([city, player, timestamp(sort: Desc)], map: "idx_flashes_city_player_timestamp_desc")
+  @@index([city, timestamp(sort: Desc)], map: "idx_flashes_city_timestamp_desc")
+  @@index([player], map: "idx_flashes_player")
+  @@index([player, timestamp(sort: Desc)], map: "idx_flashes_player_timestamp_desc")
+  @@index([timestamp], map: "idx_flashes_timestamp")
 }
