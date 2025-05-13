@@ -7,6 +7,12 @@ export class PostgresFlashcastrUsers extends Postgres<User> {
     super(pool);
   }
 
+  public async getByFid(fid: number): Promise<User> {
+    const sql = `SELECT * FROM flashcastr_users WHERE fid = $1`;
+    const result = await this.query(sql, [fid]);
+    return result[0];
+  }
+
   public async insert(user: User): Promise<number> {
     const sql = `
       INSERT INTO flashcastr_users (fid, username, signer_uuid, auto_cast)

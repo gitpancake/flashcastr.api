@@ -30,10 +30,10 @@ const typeDefs = gql`
     user_username: String
     user_pfp_url: String
     cast_hash: String
+    flash: Flash!
   }
 
   type FlashesSummary {
-    flashes: [Flash!]!
     flashCount: Int!
     cities: [String!]!
   }
@@ -50,9 +50,8 @@ const typeDefs = gql`
 
   type Query {
     users(username: String, fid: Int): [User!]!
-    flashes(fid: Int, username: String): [FlashcastrFlash!]!
+    flashes(page: Int, limit: Int, fid: Int, username: String): [FlashcastrFlash!]!
     flashesSummary(fid: Int!, page: Int, limit: Int): FlashesSummary!
-    flashesAll(page: Int, limit: Int, fid: Int, search: String): [FlashcastrFlash!]!
   }
 
   type Mutation {
@@ -69,77 +68,75 @@ const resolvers = {
       if (args.username) where.username = args.username;
       if (typeof args.fid === "number") where.fid = args.fid;
 
-      const users = await prisma.users.findMany({
+      const users = await prisma.flashcastr_users.findMany({
         where,
         select: {
-          id: true,
           auto_cast: true,
           fid: true,
-          historic_sync: true,
           username: true,
         },
       });
 
       return users;
     },
-    flashes: async (_: any, args: { fid?: number; username?: string }) => {
+    flashes: async (_: any, args: { fid?: number; username?: string; page?: number; limit?: number }) => {
+      const { page = 1, limit = 20 } = args;
+      const validatedPage = Math.max(1, page);
+
       const where: any = {};
+
       if (typeof args.fid === "number") where["user.fid"] = args.fid;
       if (args.username) where["user.username"] = args.username;
-      const flashes = await prisma.flashes.findMany({
+
+      const flashes = await prisma.flashcastr_flashes.findMany({
         where: Object.keys(where).length
-          ? { user: { ...("user.fid" in where ? { fid: where["user.fid"] } : {}), ...("user.username" in where ? { username: where["user.username"] } : {}) } }
+          ? {
+              user_fid: where["user.fid"],
+              user_username: where["user.username"],
+            }
           : undefined,
-      });
-      return flashes;
-    },
-    flashesSummary: async (_: any, args: { fid: number; page?: number; limit?: number }) => {
-      const { fid, page = 1, limit = 20 } = args;
-      const where = { user: { is: { fid } } };
-      // Paginated flashes
-      const flashes = await prisma.flashes.findMany({
-        where,
-        skip: (page - 1) * limit,
-        take: limit,
-      });
-      // Count
-      const flashCount = await prisma.flashes.count({ where });
-
-      // Distinct cities: fetch all flashes for the user and extract unique city names
-      const allFlashes = await prisma.flashes.findMany({
-        where,
-        select: { flash: { select: { city: true } } },
-      });
-
-      const cities = Array.from(new Set(allFlashes.map((f) => f.flash?.city).filter(Boolean)));
-      return { flashes, flashCount, cities };
-    },
-    flashesAll: async (_: any, args: { page?: number; limit?: number; fid?: number; search?: string }) => {
-      const { page = 1, limit = 40, fid, search } = args;
-      const where: any = {};
-      if (typeof fid === "number") {
-        where.user = { is: { fid } };
-      }
-      if (search) {
-        // Case-insensitive search on flash.city or flash.player
-        where.OR = [{ flash: { city: { contains: search, mode: "insensitive" } } }, { flash: { player: { contains: search, mode: "insensitive" } } }];
-      }
-
-      return await prisma.flashes.findMany({
-        where: Object.keys(where).length ? where : undefined,
-        skip: (page - 1) * limit,
+        include: {
+          flashes: true,
+          flashcastr_users: true,
+        },
+        skip: (validatedPage - 1) * limit,
         take: limit,
         orderBy: {
-          flash: {
+          flashes: {
             timestamp: "desc",
           },
         },
-        select: {
-          flash: true,
-          user: true,
-          castHash: true,
+      });
+
+      return flashes.map((flash) => {
+        return {
+          ...flash,
+          flash_id: Number(flash.flash_id),
+          flash: {
+            ...flash.flashes,
+            flash_id: Number(flash.flashes.flash_id),
+          },
+        };
+      });
+    },
+    flashesSummary: async (_: any, args: { fid: number; page?: number; limit?: number }) => {
+      const { fid, page = 1, limit = 20 } = args;
+      const where = { user_fid: fid };
+
+      // Count
+      const flashCount = await prisma.flashcastr_flashes.count({ where });
+
+      // Distinct cities: fetch all flashes for the user and extract unique city names
+      const allFlashes = await prisma.flashcastr_flashes.findMany({
+        where,
+        include: {
+          flashes: true,
         },
       });
+
+      const cities = Array.from(new Set(allFlashes.map((f) => f.flashes?.city).filter(Boolean)));
+
+      return { flashCount, cities };
     },
   },
   Mutation: {
@@ -152,14 +149,16 @@ const resolvers = {
         throw new Error("Unauthorized: Invalid API key");
       }
 
+      const db = new PostgresFlashcastrUsers();
+
       try {
-        await new PostgresFlashcastrUsers().updateAutocast(args.fid, args.auto_cast);
+        await db.updateAutocast(args.fid, args.auto_cast);
       } catch (err) {
         console.log(err);
       }
 
       // Return the updated user (fetch after update)
-      const updatedUser = await prisma.users.findFirst({ where: { fid: args.fid } });
+      const updatedUser = await db.getByFid(args.fid);
 
       if (!updatedUser) throw new Error("User not found");
       return updatedUser;
@@ -167,11 +166,21 @@ const resolvers = {
     deleteUser: async (_: any, args: { fid: number }, context: any) => {
       const apiKey = context.req?.headers["x-api-key"] || context.req?.headers["X-API-KEY"];
       const validApiKey = process.env.API_KEY;
+
       if (!apiKey || apiKey !== validApiKey) {
         throw new Error("Unauthorized: Invalid API key");
       }
+
       try {
-        await new PostgresFlashcastrUsers().deleteByFid(args.fid);
+        const usersDb = new PostgresFlashcastrUsers();
+
+        const user = await usersDb.getByFid(args.fid);
+
+        if (!user) {
+          return { success: false, message: "User not found" };
+        }
+
+        await usersDb.deleteByFid(args.fid);
         await new PostgresFlashcastrFlashes().deleteManyByFid(args.fid);
       } catch (err) {
         console.log(err);
