@@ -1,6 +1,7 @@
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { ApolloServer, gql } from "apollo-server";
 import { PostgresFlashcastrFlashes } from "./utils/database/flashcastr";
+import { PostgresFlashes } from "./utils/database/flashes";
 import { PostgresFlashcastrUsers } from "./utils/database/users";
 import SignupTask from "./utils/tasks/signup";
 
@@ -52,6 +53,7 @@ const typeDefs = gql`
     users(username: String, fid: Int): [User!]!
     flashes(page: Int, limit: Int, fid: Int, username: String): [FlashcastrFlash!]!
     flashesSummary(fid: Int!, page: Int, limit: Int): FlashesSummary!
+    allFlashesPlayers(username: String): [String!]!
   }
 
   type Mutation {
@@ -79,23 +81,38 @@ const resolvers = {
 
       return users;
     },
+    allFlashesPlayers: async (_: any, args: { username?: string }) => {
+      if (!args.username) return [];
+
+      try {
+        const flashesDb = new PostgresFlashes();
+        return await flashesDb.getAllPlayers(args.username);
+      } catch (error) {
+        // The error is already logged in the getAllPlayers method
+        // Potentially re-throw or return a user-friendly GraphQL error
+        throw new Error("Failed to fetch player names");
+      }
+    },
     flashes: async (_: any, args: { fid?: number; username?: string; page?: number; limit?: number }) => {
       const { page = 1, limit = 20 } = args;
       const validatedPage = Math.max(1, page);
 
-      const where: any = {};
+      const prismaWhereClause: Prisma.flashcastr_flashesWhereInput = {
+        deleted: false,
+        flashcastr_users: {
+          deleted: false,
+        },
+      };
 
-      if (typeof args.fid === "number") where["user.fid"] = args.fid;
-      if (args.username) where["user.username"] = args.username;
+      if (typeof args.fid === "number") {
+        prismaWhereClause.user_fid = args.fid;
+      }
+      if (args.username) {
+        prismaWhereClause.user_username = args.username;
+      }
 
       const flashes = await prisma.flashcastr_flashes.findMany({
-        where: Object.keys(where).length
-          ? {
-              deleted: false,
-              user_fid: where["user.fid"],
-              user_username: where["user.username"],
-            }
-          : { deleted: false },
+        where: prismaWhereClause,
         include: {
           flashes: true,
           flashcastr_users: true,

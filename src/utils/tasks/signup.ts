@@ -1,9 +1,8 @@
 import { Flash, FlashesApi } from "../api.invaders.fun/flashes";
 import { PostgresFlashcastrFlashes } from "../database/flashcastr";
 import { FlashcastrFlash } from "../database/flashcastr/types";
-
 import { PostgresFlashcastrUsers } from "../database/users";
-import neynarClient from "../neynar";
+import neynarClient from "../neynar/client";
 
 class SignupTask {
   public async handle({ fid, signer_uuid, username }: { fid: number; signer_uuid: string; username: string }): Promise<void> {
