@@ -201,7 +201,7 @@ const resolvers = {
             const finalizedUser = await SignupOperations.finalizeSignupProcess({
               fid: neynarSigner.fid,
               signer_uuid: neynarSigner.signer_uuid,
-              username: username,
+              flashInvadersPlayerName: username,
             });
             return {
               status: "APPROVED_FINALIZED",
