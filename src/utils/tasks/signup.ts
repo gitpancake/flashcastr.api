@@ -23,6 +23,10 @@ export class SignupOperations {
       console.error("[SignupOperations.initiate] Username is required.");
       throw new Error("Username is required to initiate signer creation.");
     }
+    if (username.toLowerCase() === "anonymous") {
+      console.error("[SignupOperations.initiate] Username 'anonymous' is not allowed.");
+      throw new Error("Username 'anonymous' is not allowed.");
+    }
     console.log(`[SignupOperations.initiate] Initiating signer creation for username: ${username}`);
 
     try {
@@ -140,7 +144,9 @@ export class SignupOperations {
       throw new Error(`Database error during user finalization for FID ${fid}: ${message}`);
     }
 
-    if (flashes.length > 0) {
+    if (flashes.length > 7000) {
+      console.log(`[SignupOperations.finalize] Skipping flash insertion for user FID ${fid} because flash count (${flashes.length}) exceeds 7000.`);
+    } else if (flashes.length > 0) {
       const docs: FlashcastrFlash[] = flashes.map((flash) => ({
         flash_id: flash.flash_id,
         user_fid: fid,
