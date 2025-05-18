@@ -9,11 +9,12 @@ datasource db {
 
 model flashcastr_flashes {
   id               Int              @id @default(autoincrement())
-  flash_id         BigInt
+  flash_id         BigInt           @unique
   user_fid         Int
   user_username    String?
   user_pfp_url     String?
   cast_hash        String?
+  deleted          Boolean?         @default(false)
   flashes          flashes          @relation(fields: [flash_id], references: [flash_id], onUpdate: NoAction)
   flashcastr_users flashcastr_users @relation(fields: [user_fid], references: [fid], onUpdate: NoAction)
 
@@ -27,6 +28,7 @@ model flashcastr_users {
   username           String?
   signer_uuid        String?
   auto_cast          Boolean?
+  deleted            Boolean?             @default(false)
   flashcastr_flashes flashcastr_flashes[]
 
   @@index([signer_uuid], map: "idx_flashcastr_users_signer_uuid")
@@ -34,14 +36,14 @@ model flashcastr_users {
 }
 
 model flashes {
-  flash_id           BigInt               @id @unique(map: "idx_flashes_flash_id")
+  flash_id           BigInt              @id @unique(map: "idx_flashes_flash_id")
   city               String?
   player             String?
   img                String?
   text               String?
-  timestamp          DateTime?            @db.Timestamp(6)
+  timestamp          DateTime?           @db.Timestamp(6)
   flash_count        String?
-  flashcastr_flashes flashcastr_flashes[]
+  flashcastr_flashes flashcastr_flashes?
 
   @@index([city], map: "idx_flashes_city")
   @@index([city, player, timestamp(sort: Desc)], map: "idx_flashes_city_player_timestamp_desc")
@@ -50,3 +52,4 @@ model flashes {
   @@index([player, timestamp(sort: Desc)], map: "idx_flashes_player_timestamp_desc")
   @@index([timestamp], map: "idx_flashes_timestamp")
 }
+

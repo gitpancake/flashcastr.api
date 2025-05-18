@@ -8,7 +8,7 @@ export class PostgresFlashcastrFlashes extends Postgres<FlashcastrFlash> {
   }
 
   public async deleteManyByFid(fid: number): Promise<FlashcastrFlash[]> {
-    const sql = `DELETE FROM flashcastr_flashes WHERE user_fid = $1`;
+    const sql = `UPDATE flashcastr_flashes SET deleted = true WHERE user_fid = $1 RETURNING *`;
     return await this.query(sql, [fid]);
   }
 

@@ -91,10 +91,11 @@ const resolvers = {
       const flashes = await prisma.flashcastr_flashes.findMany({
         where: Object.keys(where).length
           ? {
+              deleted: false,
               user_fid: where["user.fid"],
               user_username: where["user.username"],
             }
-          : undefined,
+          : { deleted: false },
         include: {
           flashes: true,
           flashcastr_users: true,
@@ -119,8 +120,8 @@ const resolvers = {
         };
       });
     },
-    flashesSummary: async (_: any, args: { fid: number; page?: number; limit?: number }) => {
-      const { fid, page = 1, limit = 20 } = args;
+    flashesSummary: async (_: any, args: { fid: number }) => {
+      const { fid } = args;
       const where = { user_fid: fid };
 
       // Count
@@ -180,8 +181,10 @@ const resolvers = {
           return { success: false, message: "User not found" };
         }
 
+        const flashesDb = new PostgresFlashcastrFlashes();
+
         await usersDb.deleteByFid(args.fid);
-        await new PostgresFlashcastrFlashes().deleteManyByFid(args.fid);
+        await flashesDb.deleteManyByFid(args.fid);
       } catch (err) {
         console.log(err);
         return { success: false, message: "User deletion failed" };
