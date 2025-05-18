@@ -15,9 +15,13 @@ export class PostgresFlashcastrUsers extends Postgres<User> {
 
   public async insert(user: User): Promise<number> {
     const sql = `
-      INSERT INTO flashcastr_users (fid, username, signer_uuid, auto_cast)
-      VALUES ($1, $2, $3, $4)
-      ON CONFLICT (fid) DO NOTHING
+      INSERT INTO flashcastr_users (fid, username, signer_uuid, auto_cast, deleted)
+      VALUES ($1, $2, $3, $4, false)
+      ON CONFLICT (fid) DO UPDATE SET
+        deleted = false,
+        username = EXCLUDED.username,
+        signer_uuid = EXCLUDED.signer_uuid,
+        auto_cast = EXCLUDED.auto_cast
       RETURNING fid
     `;
 
@@ -26,7 +30,7 @@ export class PostgresFlashcastrUsers extends Postgres<User> {
     const result = await this.query(sql, values);
 
     if (result.length === 0) {
-      throw new Error("Failed to insert user or user already exists");
+      throw new Error("Failed to insert or update user");
     }
 
     return result[0].fid;
@@ -49,7 +53,8 @@ export class PostgresFlashcastrUsers extends Postgres<User> {
 
   public async deleteByFid(fid: number): Promise<void> {
     const sql = `
-      DELETE FROM flashcastr_users
+      UPDATE flashcastr_users
+      SET deleted = true
       WHERE fid = $1
     `;
 

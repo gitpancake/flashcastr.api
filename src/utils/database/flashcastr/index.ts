@@ -24,9 +24,14 @@ export class PostgresFlashcastrFlashes extends Postgres<FlashcastrFlash> {
     });
 
     const sql = `
-      INSERT INTO flashcastr_flashes (${columns.join(", ")})
-      VALUES ${valuePlaceholders.join(", ")}
-      ON CONFLICT (flash_id) DO NOTHING
+      INSERT INTO flashcastr_flashes (${columns.join(", ")}, deleted)
+      VALUES ${valuePlaceholders.map((ph) => ph.replace(")", ", false)")).join(", ")}
+      ON CONFLICT (flash_id) DO UPDATE SET
+        deleted = false,
+        user_fid = EXCLUDED.user_fid,
+        user_username = EXCLUDED.user_username,
+        user_pfp_url = EXCLUDED.user_pfp_url,
+        cast_hash = EXCLUDED.cast_hash
     `;
 
     return await this.query(sql, values);

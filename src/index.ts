@@ -64,7 +64,7 @@ const typeDefs = gql`
 const resolvers = {
   Query: {
     users: async (_: any, args: { username?: string; fid?: number }) => {
-      const where: any = {};
+      const where: any = { deleted: false };
       if (args.username) where.username = args.username;
       if (typeof args.fid === "number") where.fid = args.fid;
 
@@ -122,7 +122,7 @@ const resolvers = {
     },
     flashesSummary: async (_: any, args: { fid: number }) => {
       const { fid } = args;
-      const where = { user_fid: fid };
+      const where = { user_fid: fid, deleted: false };
 
       // Count
       const flashCount = await prisma.flashcastr_flashes.count({ where });
@@ -182,6 +182,8 @@ const resolvers = {
         }
 
         const flashesDb = new PostgresFlashcastrFlashes();
+
+        console.log(args.fid);
 
         await usersDb.deleteByFid(args.fid);
         await flashesDb.deleteManyByFid(args.fid);
