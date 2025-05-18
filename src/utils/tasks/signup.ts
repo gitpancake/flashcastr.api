@@ -56,31 +56,55 @@ export class SignupOperations {
     }
   }
 
-  public async finalizeSignupProcess({ fid, signer_uuid, username }: { fid: number; signer_uuid: string; username: string }): Promise<DbUser> {
+  public async finalizeSignupProcess({
+    fid,
+    signer_uuid,
+    username, // This is the Farcaster username provided by the client during signup initiation
+  }: {
+    fid: number;
+    signer_uuid: string;
+    username: string;
+  }): Promise<DbUser> {
     if (!process.env.SIGNER_ENCRYPTION_KEY) {
-      throw new Error("SIGNER_ENCRYPTION_KEY is not set");
+      console.error("[SignupOperations.finalize] SIGNER_ENCRYPTION_KEY is not set in environment variables.");
+      throw new Error("SIGNER_ENCRYPTION_KEY is not set, cannot finalize signup.");
     }
 
-    console.log(`[SignupOperations.finalize] Finalizing signup for FID: ${fid}, Username: ${username}, Signer: ${signer_uuid}`);
+    console.log(`[SignupOperations.finalize] Finalizing signup for FID: ${fid}, Client-provided Username: ${username}, Signer: ${signer_uuid}`);
 
     let pfpUrl = "";
+    let authoritativeFarcasterUsername = username;
+
     try {
       const {
         users: [neynarUser],
       } = await neynarClient.fetchBulkUsers({ fids: [fid] });
-      if (neynarUser && neynarUser.pfp_url) {
-        pfpUrl = neynarUser.pfp_url;
+
+      if (neynarUser) {
+        pfpUrl = neynarUser.pfp_url ?? "";
+        if (neynarUser.username && neynarUser.username.trim() !== "") {
+          authoritativeFarcasterUsername = neynarUser.username;
+          if (username !== authoritativeFarcasterUsername) {
+            console.log(
+              `[SignupOperations.finalize] Farcaster username from Neynar ('${authoritativeFarcasterUsername}') differs from client-provided ('${username}') for FID ${fid}. Using Neynar's version.`
+            );
+          }
+        } else {
+          console.warn(`[SignupOperations.finalize] Neynar user (FID: ${fid}) has no username or it's empty. Using client-provided username: '${username}'.`);
+        }
+      } else {
+        console.warn(`[SignupOperations.finalize] Could not fetch Neynar user details for FID ${fid}. Using client-provided username '${username}' and no pfp_url.`);
       }
     } catch (error) {
-      console.warn(`[SignupOperations.finalize] Error fetching Neynar user details for FID ${fid} (pfp_url will be empty):`, error);
+      console.warn(`[SignupOperations.finalize] Error fetching Neynar user details for FID ${fid}. Will use client-provided username '${username}' and no pfp_url. Error:`, error);
     }
-    console.log(`[SignupOperations.finalize] Neynar pfp_url for FID ${fid}: '${pfpUrl}'`);
+    console.log(`[SignupOperations.finalize] Effective Farcaster Username for DB records: '${authoritativeFarcasterUsername}', PFP URL: '${pfpUrl}' for FID ${fid}.`);
 
     function escapeRegex(str: string) {
       return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     }
-    const safeUsername = escapeRegex(username);
-    console.log(`[SignupOperations.finalize] Fetching flashes for safeUsername: ${safeUsername}`);
+    const safeUsernameForFlashQuery = escapeRegex(username);
+    console.log(`[SignupOperations.finalize] Fetching flashes for player/username (for flash query): ${safeUsernameForFlashQuery}`);
     const flashes: Flash[] = [];
     let offset = 0;
     let doesHaveNext = true;
@@ -88,26 +112,26 @@ export class SignupOperations {
 
     try {
       do {
-        const { items, hasNext } = await new FlashesApi().getFlashes(offset, limit, safeUsername);
+        const { items, hasNext } = await new FlashesApi().getFlashes(offset, limit, safeUsernameForFlashQuery);
         flashes.push(...items);
         offset += limit;
         doesHaveNext = hasNext;
       } while (doesHaveNext);
-      console.log(`[SignupOperations.finalize] Fetched ${flashes.length} flashes for ${username}.`);
+      console.log(`[SignupOperations.finalize] Fetched ${flashes.length} flashes for player/username: ${safeUsernameForFlashQuery}.`);
     } catch (error) {
-      console.error(`[SignupOperations.finalize] Error fetching flashes for ${username} (will proceed without flashes):`, error);
+      console.error(`[SignupOperations.finalize] Error fetching flashes for player/username: ${safeUsernameForFlashQuery} (will proceed without flashes):`, error);
     }
 
     const userToStore: DbUser = {
       fid,
-      username,
+      username: authoritativeFarcasterUsername,
       signer_uuid: encrypt(signer_uuid, process.env.SIGNER_ENCRYPTION_KEY),
       auto_cast: true,
     };
 
     const usersDb = new PostgresFlashcastrUsers();
     try {
-      console.log(`[SignupOperations.finalize] Inserting/updating user in DB: FID ${fid}, Username ${username}, Signer ${signer_uuid}`);
+      console.log(`[SignupOperations.finalize] Inserting/updating user in DB: FID ${fid}, Username '${authoritativeFarcasterUsername}', Encrypted Signer (length): ${userToStore.signer_uuid?.length}`);
       await usersDb.insert(userToStore);
       console.log(`[SignupOperations.finalize] User record for FID ${fid} processed in DB.`);
     } catch (error) {
@@ -120,7 +144,7 @@ export class SignupOperations {
       const docs: FlashcastrFlash[] = flashes.map((flash) => ({
         flash_id: flash.flash_id,
         user_fid: fid,
-        user_username: username,
+        user_username: authoritativeFarcasterUsername,
         user_pfp_url: pfpUrl,
         cast_hash: null,
       }));
@@ -133,10 +157,10 @@ export class SignupOperations {
         console.error(`[SignupOperations.finalize] Error inserting flash records for FID ${fid} (signup completed for user, but not flashes):`, error);
       }
     } else {
-      console.log(`[SignupOperations.finalize] No flashes found or to insert for ${username}.`);
+      console.log(`[SignupOperations.finalize] No flashes found or to insert for player/username: ${safeUsernameForFlashQuery}.`);
     }
 
-    console.log(`[SignupOperations.finalize] Successfully finalized signup for username: ${username}, FID: ${fid}`);
+    console.log(`[SignupOperations.finalize] Successfully finalized signup for Farcaster user: '${authoritativeFarcasterUsername}', FID: ${fid}`);
     try {
       const dbUserRecord = await usersDb.getByFid(fid);
       if (!dbUserRecord) {

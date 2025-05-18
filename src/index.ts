@@ -158,7 +158,13 @@ const resolvers = {
     },
     flashesSummary: async (_: any, args: { fid: number }) => {
       const { fid } = args;
-      const where = { user_fid: fid, deleted: false };
+      const where = {
+        user_fid: fid,
+        deleted: false,
+        flashcastr_users: {
+          deleted: false,
+        },
+      };
 
       // Count
       const flashCount = await prisma.flashcastr_flashes.count({ where });
