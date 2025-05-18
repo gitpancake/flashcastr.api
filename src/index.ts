@@ -308,6 +308,7 @@ const resolvers = {
     signup: async (_: any, args: { fid: number; signer_uuid: String; username: String }, context: any) => {
       const apiKey = context.req?.headers["x-api-key"] || context.req?.headers["X-API-KEY"];
       const validApiKey = process.env.API_KEY;
+
       if (!apiKey || apiKey !== validApiKey) throw new Error("Unauthorized: Invalid API key");
 
       console.warn("[GraphQL signup mutation] This mutation is likely deprecated or needs rework due to the new initiateSignup/pollSignupStatus flow. Currently a no-op.");
@@ -326,6 +327,7 @@ const resolvers = {
       }
       try {
         const result = await SignupOperations.initiateSignerCreation(username);
+
         return {
           signer_uuid: result.signer_uuid,
           public_key: result.public_key,

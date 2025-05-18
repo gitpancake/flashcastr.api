@@ -3,6 +3,7 @@ import { PostgresFlashcastrFlashes } from "../database/flashcastr";
 import { FlashcastrFlash } from "../database/flashcastr/types";
 import { PostgresFlashcastrUsers } from "../database/users";
 import { User as DbUser } from "../database/users/types";
+import { encrypt } from "../encrypt/encrypt";
 
 import neynarClient from "../neynar/client";
 import { getSignedKey } from "../neynar/getSignedKey";
@@ -56,6 +57,10 @@ export class SignupOperations {
   }
 
   public async finalizeSignupProcess({ fid, signer_uuid, username }: { fid: number; signer_uuid: string; username: string }): Promise<DbUser> {
+    if (!process.env.SIGNER_ENCRYPTION_KEY) {
+      throw new Error("SIGNER_ENCRYPTION_KEY is not set");
+    }
+
     console.log(`[SignupOperations.finalize] Finalizing signup for FID: ${fid}, Username: ${username}, Signer: ${signer_uuid}`);
 
     let pfpUrl = "";
@@ -96,7 +101,7 @@ export class SignupOperations {
     const userToStore: DbUser = {
       fid,
       username,
-      signer_uuid,
+      signer_uuid: encrypt(signer_uuid, process.env.SIGNER_ENCRYPTION_KEY),
       auto_cast: true,
     };
 
