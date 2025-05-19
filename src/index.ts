@@ -1,6 +1,7 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import { ApolloServer, gql } from "apollo-server";
 import { GraphQLError } from "graphql";
+import { verifyApiKey } from "./utils/auth";
 import { PostgresFlashcastrFlashes } from "./utils/database/flashcastr";
 import { PostgresFlashes } from "./utils/database/flashes";
 import { PostgresFlashcastrUsers } from "./utils/database/users";
@@ -8,6 +9,9 @@ import neynarClient from "./utils/neynar/client";
 import SignupOperations from "./utils/tasks/signup";
 
 const prisma = new PrismaClient();
+
+const DEFAULT_PAGE = 1;
+const DEFAULT_LIMIT = 20;
 
 const typeDefs = gql`
   type User {
@@ -85,12 +89,16 @@ const typeDefs = gql`
 const resolvers = {
   Query: {
     users: async (_: any, args: { username?: string; fid?: number }) => {
-      const where: any = { deleted: false };
-      if (args.username) where.username = args.username;
-      if (typeof args.fid === "number") where.fid = args.fid;
+      const whereInput: Prisma.flashcastr_usersWhereInput = { deleted: false };
+      if (args.username) {
+        whereInput.username = args.username;
+      }
+      if (typeof args.fid === "number") {
+        whereInput.fid = args.fid;
+      }
 
       const users = await prisma.flashcastr_users.findMany({
-        where,
+        where: whereInput,
         select: {
           auto_cast: true,
           fid: true,
@@ -113,8 +121,8 @@ const resolvers = {
       }
     },
     flashes: async (_: any, args: { fid?: number; username?: string; page?: number; limit?: number }) => {
-      const { page = 1, limit = 20 } = args;
-      const validatedPage = Math.max(1, page);
+      const { page = DEFAULT_PAGE, limit = DEFAULT_LIMIT } = args;
+      const validatedPage = Math.max(DEFAULT_PAGE, page);
 
       const prismaWhereClause: Prisma.flashcastr_flashesWhereInput = {
         deleted: false,
@@ -193,35 +201,40 @@ const resolvers = {
         });
       }
 
+      // Helper function for finalization
+      async function finalizeAndRespond(fid: number, neynar_signer_uuid: string, flash_invaders_player_name: string) {
+        try {
+          const finalizedUser = await SignupOperations.finalizeSignupProcess({
+            fid: fid,
+            signer_uuid: neynar_signer_uuid, // Corrected variable name
+            flashInvadersPlayerName: flash_invaders_player_name, // Corrected variable name
+          });
+          return {
+            status: "APPROVED_FINALIZED",
+            fid: finalizedUser.fid,
+            user: {
+              fid: finalizedUser.fid,
+              username: finalizedUser.username,
+              auto_cast: finalizedUser.auto_cast,
+            },
+            message: "User signup finalized successfully.",
+          };
+        } catch (finalizationError) {
+          console.error(`[GraphQL pollSignupStatus] Error finalizing signup for signer ${neynar_signer_uuid}, user ${flash_invaders_player_name}:`, finalizationError);
+          return {
+            status: "ERROR_FINALIZATION",
+            fid: fid,
+            user: null,
+            message: finalizationError instanceof Error ? finalizationError.message : "Failed to finalize user signup in DB.",
+          };
+        }
+      }
+
       try {
         const neynarSigner = await neynarClient.lookupSigner({ signerUuid: signer_uuid });
 
         if (neynarSigner.status === "approved" && neynarSigner.fid) {
-          try {
-            const finalizedUser = await SignupOperations.finalizeSignupProcess({
-              fid: neynarSigner.fid,
-              signer_uuid: neynarSigner.signer_uuid,
-              flashInvadersPlayerName: username,
-            });
-            return {
-              status: "APPROVED_FINALIZED",
-              fid: finalizedUser.fid,
-              user: {
-                fid: finalizedUser.fid,
-                username: finalizedUser.username,
-                auto_cast: finalizedUser.auto_cast,
-              },
-              message: "User signup finalized successfully.",
-            };
-          } catch (finalizationError) {
-            console.error(`[GraphQL pollSignupStatus] Error finalizing signup for signer ${signer_uuid}, user ${username}:`, finalizationError);
-            return {
-              status: "ERROR_FINALIZATION",
-              fid: neynarSigner.fid,
-              user: null,
-              message: finalizationError instanceof Error ? finalizationError.message : "Failed to finalize user signup in DB.",
-            };
-          }
+          return await finalizeAndRespond(neynarSigner.fid, signer_uuid, username);
         } else if (neynarSigner.status === "pending_approval") {
           return {
             status: "PENDING_APPROVAL",
@@ -237,6 +250,7 @@ const resolvers = {
             message: "Signer request was revoked.",
           };
         } else {
+          // Default case for other neynar statuses
           return {
             status: `NEYNAR_STATUS_${neynarSigner.status.toUpperCase()}`,
             fid: null,
@@ -257,37 +271,30 @@ const resolvers = {
   },
   Mutation: {
     setUserAutoCast: async (_: any, args: { fid: number; auto_cast: boolean }, context: any) => {
-      const apiKey = context.req?.headers["x-api-key"] || context.req?.headers["X-API-KEY"];
-
-      const validApiKey = process.env.API_KEY;
-
-      if (!apiKey || apiKey !== validApiKey) {
-        throw new GraphQLError("Unauthorized: Invalid API key", {
-          extensions: { code: "UNAUTHORIZED" },
-        });
-      }
+      verifyApiKey(context);
 
       const db = new PostgresFlashcastrUsers();
 
       try {
         await db.updateAutocast(args.fid, args.auto_cast);
       } catch (err) {
-        console.log(err);
+        console.error("[GraphQL setUserAutoCast] Error updating autocast:", err);
+        throw new GraphQLError("Failed to update user auto_cast setting.", {
+          extensions: { code: "DATABASE_ERROR" },
+        });
       }
 
-      // Return the updated user (fetch after update)
       const updatedUser = await db.getByFid(args.fid);
 
-      if (!updatedUser) throw new Error("User not found");
+      if (!updatedUser) {
+        throw new GraphQLError("User not found after update.", {
+          extensions: { code: "NOT_FOUND", resource: "User", fid: args.fid },
+        });
+      }
       return updatedUser;
     },
     deleteUser: async (_: any, args: { fid: number }, context: any) => {
-      const apiKey = context.req?.headers["x-api-key"] || context.req?.headers["X-API-KEY"];
-      const validApiKey = process.env.API_KEY;
-
-      if (!apiKey || apiKey !== validApiKey) {
-        throw new Error("Unauthorized: Invalid API key");
-      }
+      verifyApiKey(context);
 
       try {
         const usersDb = new PostgresFlashcastrUsers();
@@ -300,22 +307,19 @@ const resolvers = {
 
         const flashesDb = new PostgresFlashcastrFlashes();
 
-        console.log(args.fid);
+        console.log("[GraphQL deleteUser] Deleting user with FID:", args.fid);
 
         await usersDb.deleteByFid(args.fid);
         await flashesDb.deleteManyByFid(args.fid);
       } catch (err) {
-        console.log(err);
+        console.error("[GraphQL deleteUser] Error deleting user:", err);
         return { success: false, message: "User deletion failed" };
       }
 
       return { success: true, message: "User deleted successfully" };
     },
     signup: async (_: any, args: { fid: number; signer_uuid: String; username: String }, context: any) => {
-      const apiKey = context.req?.headers["x-api-key"] || context.req?.headers["X-API-KEY"];
-      const validApiKey = process.env.API_KEY;
-
-      if (!apiKey || apiKey !== validApiKey) throw new Error("Unauthorized: Invalid API key");
+      verifyApiKey(context);
 
       console.warn("[GraphQL signup mutation] This mutation is likely deprecated or needs rework due to the new initiateSignup/pollSignupStatus flow. Currently a no-op.");
       // The previous problematic line was: new SignupOperations().handle({ username: args.username });
@@ -329,7 +333,9 @@ const resolvers = {
     initiateSignup: async (_: any, args: { username: string }) => {
       const { username } = args;
       if (!username) {
-        throw new Error("Username is required to initiate signup.");
+        throw new GraphQLError("Username is required to initiate signup.", {
+          extensions: { code: "BAD_USER_INPUT", argumentName: "username" },
+        });
       }
       try {
         const result = await SignupOperations.initiateSignerCreation(username);
