@@ -7,10 +7,9 @@ export class PostgresFlashcastrUsers extends Postgres<User> {
     super(pool);
   }
 
-  public async getByFid(fid: number): Promise<User> {
-    const sql = `SELECT * FROM flashcastr_users WHERE fid = $1`;
-    const result = await this.query(sql, [fid]);
-    return result[0];
+  public async getByFid(fid: number): Promise<User | null> {
+    const sql = `SELECT * FROM flashcastr_users WHERE fid = $1 AND deleted = false`;
+    return this.queryOne(sql, [fid]);
   }
 
   public async insert(user: User): Promise<number> {
@@ -56,12 +55,13 @@ export class PostgresFlashcastrUsers extends Postgres<User> {
       UPDATE flashcastr_users
       SET deleted = true
       WHERE fid = $1
+      RETURNING fid
     `;
 
     const result = await this.query(sql, [fid]);
 
     if (result.length === 0) {
-      throw new Error("No user found with the provided fid");
+      throw new Error("No active user found with the provided fid to delete");
     }
   }
 }

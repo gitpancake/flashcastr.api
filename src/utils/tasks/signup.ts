@@ -10,6 +10,9 @@ import { getSignedKey } from "../neynar/getSignedKey";
 // Signer type from Neynar SDK might be useful for type hints if getSignedKey returns it directly.
 // import { Signer } from "@neynar/nodejs-sdk/build/api";
 
+const FLASH_FETCH_LIMIT = 20;
+const MAX_FLASHES_TO_INSERT = 7000;
+
 // Renamed class to reflect multiple operations
 export class SignupOperations {
   public async initiateSignerCreation(username: string): Promise<{
@@ -41,11 +44,6 @@ export class SignupOperations {
         })}`
       );
 
-      if (!signerData || !signerData.signer_uuid) {
-        // This check might be redundant if getSignedKey throws on failure to get a signer_uuid
-        throw new Error("getSignedKey did not return a valid signer_uuid.");
-      }
-
       return {
         signer_uuid: signerData.signer_uuid,
         public_key: signerData.public_key,
@@ -60,124 +58,135 @@ export class SignupOperations {
     }
   }
 
-  public async finalizeSignupProcess({
-    fid,
-    signer_uuid,
-    flashInvadersPlayerName, // This is the Flash Invaders username provided by the client during signup initiation
-  }: {
-    fid: number;
-    signer_uuid: string;
-    flashInvadersPlayerName: string;
-  }): Promise<DbUser> {
-    if (!process.env.SIGNER_ENCRYPTION_KEY) {
-      console.error("[SignupOperations.finalize] SIGNER_ENCRYPTION_KEY is not set in environment variables.");
-      throw new Error("SIGNER_ENCRYPTION_KEY is not set, cannot finalize signup.");
-    }
-
-    console.log(`[SignupOperations.finalize] Finalizing signup for FID: ${fid}, Player: ${flashInvadersPlayerName}, Signer: ${signer_uuid}`);
-
-    let pfpUrl = "";
-    let farcasterUsername = "";
-
+  private async _fetchNeynarUserDetails(fid: number): Promise<{ pfpUrl: string; farcasterUsername: string }> {
+    console.log(`[SignupOperations._fetchNeynarUserDetails] Fetching Neynar user details for FID: ${fid}`);
     try {
       const {
         users: [neynarUser],
       } = await neynarClient.fetchBulkUsers({ fids: [fid] });
 
       if (!neynarUser) {
-        throw new Error(`[SignupOperations.finalize] Could not fetch Neynar user details for FID ${fid}.`);
+        throw new Error(`Could not fetch Neynar user details for FID ${fid}.`);
       }
-
-      pfpUrl = neynarUser.pfp_url ?? "";
-      farcasterUsername = neynarUser.username ?? "";
-
-      console.log(`[SignupOperations.finalize] Effective Farcaster Username for DB records: '${farcasterUsername}', FID ${fid}.`);
+      const pfpUrl = neynarUser.pfp_url ?? "";
+      const farcasterUsername = neynarUser.username ?? "";
+      console.log(`[SignupOperations._fetchNeynarUserDetails] Fetched Neynar details for FID ${fid}: Username '${farcasterUsername}'`);
+      return { pfpUrl, farcasterUsername };
     } catch (error) {
-      if (error instanceof Error) {
-        throw new Error(`[SignupOperations.finalize] Error fetching Neynar user details for FID ${fid}. ${error.message}`);
-      } else {
-        throw new Error(`[SignupOperations.finalize] Error fetching Neynar user details for FID ${fid}. ${error}`);
-      }
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[SignupOperations._fetchNeynarUserDetails] Error fetching Neynar user details for FID ${fid}: ${message}`);
+      throw new Error(`Error fetching Neynar user details for FID ${fid}. ${message}`);
     }
+  }
 
-    function escapeRegex(str: string) {
-      return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    }
-    const safPlayerName = escapeRegex(flashInvadersPlayerName);
+  private _escapeRegex(str: string): string {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
 
-    console.log(`[SignupOperations.finalize] Fetching flashes for player/username (for flash query): ${safPlayerName}`);
-
+  private async _fetchAllFlashesForPlayer(playerName: string): Promise<Flash[]> {
+    const safPlayerName = this._escapeRegex(playerName);
+    console.log(`[SignupOperations._fetchAllFlashesForPlayer] Fetching flashes for player: ${safPlayerName}`);
     const flashes: Flash[] = [];
     let offset = 0;
     let doesHaveNext = true;
-    const limit = 20;
 
     try {
       do {
-        const { items, hasNext } = await new FlashesApi().getFlashes(offset, limit, safPlayerName);
+        const { items, hasNext } = await new FlashesApi().getFlashes(offset, FLASH_FETCH_LIMIT, safPlayerName);
         flashes.push(...items);
-        offset += limit;
+        offset += FLASH_FETCH_LIMIT;
         doesHaveNext = hasNext;
       } while (doesHaveNext);
-      console.log(`[SignupOperations.finalize] Fetched ${flashes.length} flashes for player/username: ${safPlayerName}.`);
+      console.log(`[SignupOperations._fetchAllFlashesForPlayer] Fetched ${flashes.length} flashes for player: ${safPlayerName}.`);
+      return flashes;
     } catch (error) {
-      console.error(`[SignupOperations.finalize] Error fetching flashes for player/username: ${safPlayerName} (will proceed without flashes):`, error);
+      console.error(`[SignupOperations._fetchAllFlashesForPlayer] Error fetching flashes for player ${safPlayerName} (will return empty list):`, error);
+      return []; // Return empty list on error, as per original logic of proceeding
     }
+  }
 
-    const userToStore: DbUser = {
-      fid,
-      username: flashInvadersPlayerName,
-      signer_uuid: encrypt(signer_uuid, process.env.SIGNER_ENCRYPTION_KEY),
-      auto_cast: true,
-    };
-
-    const usersDb = new PostgresFlashcastrUsers();
+  private async _storeUserDetails(userToStore: DbUser): Promise<void> {
+    console.log(
+      `[SignupOperations._storeUserDetails] Inserting/updating user in DB: FID ${userToStore.fid}, Username ${userToStore.username}, Encrypted Signer (length): ${userToStore.signer_uuid?.length}`
+    );
     try {
-      console.log(
-        `[SignupOperations.finalize] Inserting/updating user in DB: FID ${fid}, Username ${farcasterUsername} Player '${flashInvadersPlayerName}', Encrypted Signer (length): ${userToStore.signer_uuid?.length}`
-      );
-      await usersDb.insert(userToStore);
-      console.log(`[SignupOperations.finalize] User record for FID ${fid} processed in DB.`);
+      await new PostgresFlashcastrUsers().insert(userToStore);
+      console.log(`[SignupOperations._storeUserDetails] User record for FID ${userToStore.fid} processed in DB.`);
     } catch (error) {
-      console.error(`[SignupOperations.finalize] Error inserting/updating user FID ${fid} in DB:`, error);
       const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`Database error during user finalization for FID ${fid}: ${message}`);
+      console.error(`[SignupOperations._storeUserDetails] Error inserting/updating user FID ${userToStore.fid} in DB:`, error);
+      throw new Error(`Database error during user data storage for FID ${userToStore.fid}: ${message}`);
     }
+  }
 
-    if (flashes.length > 7000) {
-      console.log(`[SignupOperations.finalize] Skipping flash insertion for user FID ${fid} because flash count (${flashes.length}) exceeds 7000.`);
-    } else if (flashes.length > 0) {
-      const docs: FlashcastrFlash[] = flashes.map((flash) => ({
-        flash_id: flash.flash_id,
-        user_fid: fid,
-        user_username: farcasterUsername,
-        user_pfp_url: pfpUrl,
-        cast_hash: null,
-      }));
-
-      try {
-        console.log(`[SignupOperations.finalize] Inserting ${docs.length} flash records for user FID ${fid}.`);
-        await new PostgresFlashcastrFlashes().insertMany(docs);
-        console.log(`[SignupOperations.finalize] Flash records inserted for user FID ${fid}.`);
-      } catch (error) {
-        console.error(`[SignupOperations.finalize] Error inserting flash records for FID ${fid} (signup completed for user, but not flashes):`, error);
-      }
-    } else {
-      console.log(`[SignupOperations.finalize] No flashes found or to insert for player/username: ${safPlayerName}.`);
+  private async _storePlayerFlashes(dbFlashesToStore: FlashcastrFlash[]): Promise<void> {
+    if (!dbFlashesToStore.length) {
+      console.log("[SignupOperations._storePlayerFlashes] No flashes to store.");
+      return;
     }
-
-    console.log(`[SignupOperations.finalize] Successfully finalized signup for Farcaster user: '${flashInvadersPlayerName}', FID: ${fid}`);
+    const fid = dbFlashesToStore[0].user_fid; // Assuming all flashes are for the same user
+    console.log(`[SignupOperations._storePlayerFlashes] Inserting ${dbFlashesToStore.length} flash records for user FID ${fid}.`);
     try {
-      const dbUserRecord = await usersDb.getByFid(fid);
+      await new PostgresFlashcastrFlashes().insertMany(dbFlashesToStore);
+      console.log(`[SignupOperations._storePlayerFlashes] Flash records inserted for user FID ${fid}.`);
+    } catch (error) {
+      console.error(`[SignupOperations._storePlayerFlashes] Error inserting flash records for FID ${fid} (signup completed for user, but not flashes):`, error);
+      // Original logic proceeds without throwing, so we just log here.
+    }
+  }
+
+  private async _getFinalizedUserFromDb(fid: number): Promise<DbUser> {
+    console.log(`[SignupOperations._getFinalizedUserFromDb] Fetching user FID ${fid} from DB after finalization.`);
+    try {
+      const dbUserRecord = await new PostgresFlashcastrUsers().getByFid(fid);
       if (!dbUserRecord) {
-        throw new Error(`User FID ${fid} not found in DB after successful finalization call. This should not happen if insert was successful.`);
+        // This case should ideally be handled by the caller if null is possible, or ensure insert guarantees presence.
+        throw new Error(`User FID ${fid} not found in DB after finalization. This indicates an issue if insert was expected to succeed.`);
       }
       return dbUserRecord;
     } catch (error) {
-      console.error(`[SignupOperations.finalize] Error fetching user FID ${fid} from DB after finalization operations:`, error);
       const message = error instanceof Error ? error.message : String(error);
+      console.error(`[SignupOperations._getFinalizedUserFromDb] Error fetching user FID ${fid} from DB:`, error);
       throw new Error(`Error fetching user FID ${fid} post-finalization: ${message}`);
     }
+  }
+
+  public async finalizeSignupProcess({ fid, signer_uuid, flashInvadersPlayerName }: { fid: number; signer_uuid: string; flashInvadersPlayerName: string }): Promise<DbUser> {
+    if (!process.env.SIGNER_ENCRYPTION_KEY) {
+      console.error("[SignupOperations.finalize] SIGNER_ENCRYPTION_KEY is not set.");
+      throw new Error("SIGNER_ENCRYPTION_KEY is not set, cannot finalize signup.");
+    }
+    console.log(`[SignupOperations.finalize] Finalizing signup for FID: ${fid}, Player: ${flashInvadersPlayerName}, Signer: ${signer_uuid}`);
+
+    const { pfpUrl, farcasterUsername } = await this._fetchNeynarUserDetails(fid);
+
+    const playerFlashes = await this._fetchAllFlashesForPlayer(flashInvadersPlayerName);
+
+    const userToStore: DbUser = {
+      fid,
+      username: flashInvadersPlayerName, // Storing Flash Invaders player name
+      signer_uuid: encrypt(signer_uuid, process.env.SIGNER_ENCRYPTION_KEY),
+      auto_cast: true,
+    };
+    await this._storeUserDetails(userToStore);
+
+    if (playerFlashes.length > MAX_FLASHES_TO_INSERT) {
+      console.log(`[SignupOperations.finalize] Skipping flash insertion for user FID ${fid} because flash count (${playerFlashes.length}) exceeds ${MAX_FLASHES_TO_INSERT}.`);
+    } else if (playerFlashes.length > 0) {
+      const dbFlashesToStore: FlashcastrFlash[] = playerFlashes.map((flash) => ({
+        flash_id: flash.flash_id,
+        user_fid: fid,
+        user_username: farcasterUsername, // Using Farcaster username from Neynar
+        user_pfp_url: pfpUrl,
+        cast_hash: null,
+      }));
+      await this._storePlayerFlashes(dbFlashesToStore);
+    } else {
+      console.log(`[SignupOperations.finalize] No flashes found or to insert for player: ${flashInvadersPlayerName}.`);
+    }
+
+    console.log(`[SignupOperations.finalize] Successfully finalized signup for Player: '${flashInvadersPlayerName}', FID: ${fid}`);
+    return this._getFinalizedUserFromDb(fid);
   }
 }
 
