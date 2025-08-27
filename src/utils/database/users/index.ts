@@ -52,8 +52,7 @@ export class PostgresFlashcastrUsers extends Postgres<User> {
 
   public async deleteByFid(fid: number): Promise<void> {
     const sql = `
-      UPDATE flashcastr_users
-      SET deleted = true
+      DELETE FROM flashcastr_users
       WHERE fid = $1
       RETURNING fid
     `;
@@ -61,7 +60,7 @@ export class PostgresFlashcastrUsers extends Postgres<User> {
     const result = await this.query(sql, [fid]);
 
     if (result.length === 0) {
-      throw new Error("No active user found with the provided fid to delete");
+      throw new Error("No user found with the provided fid to delete");
     }
   }
 }
