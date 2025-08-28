@@ -73,6 +73,7 @@ const typeDefs = gql`
   type Query {
     users(username: String, fid: Int): [User!]!
     flashes(page: Int, limit: Int, fid: Int, username: String): [FlashcastrFlash!]!
+    flash(id: Int!): FlashcastrFlash
     flashesSummary(fid: Int!, page: Int, limit: Int): FlashesSummary!
     allFlashesPlayers(username: String): [String!]!
     pollSignupStatus(signer_uuid: String!, username: String!): PollSignupStatusResponse!
@@ -163,6 +164,34 @@ const resolvers = {
           },
         };
       });
+    },
+    flash: async (_: any, args: { id: number }) => {
+      const flash = await prisma.flashcastr_flashes.findFirst({
+        where: {
+          id: args.id,
+          deleted: false,
+          flashcastr_users: {
+            deleted: false,
+          },
+        },
+        include: {
+          flashes: true,
+          flashcastr_users: true,
+        },
+      });
+
+      if (!flash) {
+        return null;
+      }
+
+      return {
+        ...flash,
+        flash_id: String(flash.flash_id),
+        flash: {
+          ...flash.flashes,
+          flash_id: String(flash.flashes.flash_id),
+        },
+      };
     },
     flashesSummary: async (_: any, args: { fid: number }) => {
       const { fid } = args;
