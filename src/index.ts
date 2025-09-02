@@ -163,7 +163,6 @@ const resolvers = {
           flash: {
             ...flash.flashes,
             flash_id: String(flash.flashes.flash_id),
-            img: getIpfsUrl(flash.flashes.ipfs_cid) || flash.flashes.img,
           },
         };
       });
@@ -193,7 +192,6 @@ const resolvers = {
         flash: {
           ...flash.flashes,
           flash_id: String(flash.flashes.flash_id),
-          img: getIpfsUrl(flash.flashes.ipfs_cid) || flash.flashes.img,
         },
       };
     },
