@@ -6,6 +6,7 @@ export interface Flash {
   flash_count: string;
   flash_id: number;
   img: string;
+  ipfs_cid: string | null;
   player: string;
   posted: boolean | null;
   text: string;
@@ -36,6 +37,7 @@ export class FlashesApi extends BaseApi {
               city
               flash_id
               img
+              ipfs_cid
               player
               text
               timestamp

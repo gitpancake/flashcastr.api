@@ -5,6 +5,7 @@ import { verifyApiKey } from "./utils/auth";
 import { PostgresFlashcastrFlashes } from "./utils/database/flashcastr";
 import { PostgresFlashes } from "./utils/database/flashes";
 import { PostgresFlashcastrUsers } from "./utils/database/users";
+import { getIpfsUrl } from "./utils/ipfs";
 import neynarClient from "./utils/neynar/client";
 import SignupOperations from "./utils/tasks/signup";
 
@@ -25,6 +26,7 @@ const typeDefs = gql`
     city: String
     player: String
     img: String
+    ipfs_cid: String
     text: String
     timestamp: String
     flash_count: String
@@ -161,6 +163,7 @@ const resolvers = {
           flash: {
             ...flash.flashes,
             flash_id: String(flash.flashes.flash_id),
+            img: getIpfsUrl(flash.flashes.ipfs_cid) || flash.flashes.img,
           },
         };
       });
@@ -190,6 +193,7 @@ const resolvers = {
         flash: {
           ...flash.flashes,
           flash_id: String(flash.flashes.flash_id),
+          img: getIpfsUrl(flash.flashes.ipfs_cid) || flash.flashes.img,
         },
       };
     },
