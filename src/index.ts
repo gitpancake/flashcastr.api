@@ -80,6 +80,7 @@ const typeDefs = gql`
   type Query {
     users(username: String, fid: Int): [User!]!
     flashes(page: Int, limit: Int, fid: Int, username: String, city: String): [FlashcastrFlash!]!
+    globalFlashes(page: Int, limit: Int, city: String, player: String): [Flash!]!
     flash(id: Int!): FlashcastrFlash
     flashesSummary(fid: Int!, page: Int, limit: Int): FlashesSummary!
     allFlashesPlayers(username: String): [String!]!
@@ -181,6 +182,40 @@ const resolvers = {
           },
         };
       });
+    },
+    globalFlashes: async (_: any, args: { page?: number; limit?: number; city?: string; player?: string }) => {
+      const { page = DEFAULT_PAGE, limit = DEFAULT_LIMIT } = args;
+      const validatedPage = Math.max(DEFAULT_PAGE, page);
+
+      const whereClause: any = {};
+
+      if (args.city) {
+        whereClause.city = {
+          equals: args.city,
+          mode: 'insensitive'
+        };
+      }
+
+      if (args.player) {
+        whereClause.player = {
+          equals: args.player,
+          mode: 'insensitive'
+        };
+      }
+
+      const globalFlashes = await prisma.flashes.findMany({
+        where: whereClause,
+        skip: (validatedPage - 1) * limit,
+        take: limit,
+        orderBy: {
+          timestamp: "desc",
+        },
+      });
+
+      return globalFlashes.map((flash) => ({
+        ...flash,
+        flash_id: String(flash.flash_id),
+      }));
     },
     flash: async (_: any, args: { id: number }) => {
       const flash = await prisma.flashcastr_flashes.findFirst({
