@@ -72,12 +72,19 @@ const typeDefs = gql`
     message: String
   }
 
+  type TrendingCity {
+    city: String!
+    count: Int!
+  }
+
   type Query {
     users(username: String, fid: Int): [User!]!
-    flashes(page: Int, limit: Int, fid: Int, username: String): [FlashcastrFlash!]!
+    flashes(page: Int, limit: Int, fid: Int, username: String, city: String): [FlashcastrFlash!]!
     flash(id: Int!): FlashcastrFlash
     flashesSummary(fid: Int!, page: Int, limit: Int): FlashesSummary!
     allFlashesPlayers(username: String): [String!]!
+    getAllCities: [String!]!
+    getTrendingCities(excludeParis: Boolean = true, hours: Int = 6): [TrendingCity!]!
     pollSignupStatus(signer_uuid: String!, username: String!): PollSignupStatusResponse!
   }
 
@@ -123,7 +130,7 @@ const resolvers = {
         });
       }
     },
-    flashes: async (_: any, args: { fid?: number; username?: string; page?: number; limit?: number }) => {
+    flashes: async (_: any, args: { fid?: number; username?: string; page?: number; limit?: number; city?: string }) => {
       const { page = DEFAULT_PAGE, limit = DEFAULT_LIMIT } = args;
       const validatedPage = Math.max(DEFAULT_PAGE, page);
 
@@ -139,6 +146,14 @@ const resolvers = {
       }
       if (args.username) {
         prismaWhereClause.user_username = args.username;
+      }
+      if (args.city) {
+        prismaWhereClause.flashes = {
+          city: {
+            equals: args.city,
+            mode: 'insensitive'
+          }
+        };
       }
 
       const flashes = await prisma.flashcastr_flashes.findMany({
@@ -219,6 +234,69 @@ const resolvers = {
       const cities = Array.from(new Set(allFlashes.map((f) => f.flashes?.city).filter(Boolean))) as string[];
 
       return { flashCount, cities };
+    },
+    getAllCities: async () => {
+      const cities = await prisma.flashes.findMany({
+        select: {
+          city: true,
+        },
+        where: {
+          city: {
+            not: null,
+          },
+        },
+        distinct: ['city'],
+        orderBy: {
+          city: 'asc',
+        },
+      });
+
+      return cities.map(c => c.city).filter(Boolean) as string[];
+    },
+    getTrendingCities: async (_: any, args: { excludeParis?: boolean; hours?: number }) => {
+      const { excludeParis = true, hours = 6 } = args;
+
+      // Calculate timestamp for N hours ago
+      const hoursAgo = new Date();
+      hoursAgo.setHours(hoursAgo.getHours() - hours);
+
+      const whereClause: any = {
+        timestamp: {
+          gte: hoursAgo,
+        },
+        city: {
+          not: null,
+        },
+      };
+
+      // Exclude Paris if requested
+      if (excludeParis) {
+        whereClause.city.notIn = ['Paris', 'paris', 'PARIS'];
+      }
+
+      // Get flashes from the last N hours, grouped by city
+      const flashes = await prisma.flashes.findMany({
+        select: {
+          city: true,
+        },
+        where: whereClause,
+      });
+
+      // Count flashes by city
+      const cityCounts: Record<string, number> = {};
+      flashes.forEach(flash => {
+        if (flash.city) {
+          cityCounts[flash.city] = (cityCounts[flash.city] || 0) + 1;
+        }
+      });
+
+      // Convert to array and sort by count (descending)
+      const trendingCities = Object.entries(cityCounts)
+        .map(([city, count]) => ({ city, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10); // Return top 10
+
+      return trendingCities;
     },
     pollSignupStatus: async (_: any, args: { signer_uuid: string; username: string }) => {
       const { signer_uuid, username } = args;
