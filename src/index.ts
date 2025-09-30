@@ -8,11 +8,16 @@ import { PostgresFlashcastrUsers } from "./utils/database/users";
 import { getIpfsUrl } from "./utils/ipfs";
 import neynarClient from "./utils/neynar/client";
 import SignupOperations from "./utils/tasks/signup";
+import pool from "./utils/database/postgresClient";
 
 const prisma = new PrismaClient();
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 20;
+
+// Cache for trending cities (24 hour TTL)
+let trendingCitiesCache: { data: Array<{ city: string; count: number }>; timestamp: number } | null = null;
+const TRENDING_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
 const typeDefs = gql`
   type User {
@@ -271,65 +276,57 @@ const resolvers = {
       return { flashCount, cities };
     },
     getAllCities: async () => {
-      const cities = await prisma.flashes.findMany({
-        select: {
-          city: true,
-        },
-        where: {
-          city: {
-            not: null,
-          },
-        },
-        distinct: ['city'],
-        orderBy: {
-          city: 'asc',
-        },
-      });
+      // Use direct DB query with DISTINCT for memory efficiency
+      const result = await pool.query<{ city: string }>(
+        'SELECT DISTINCT city FROM flashes WHERE city IS NOT NULL ORDER BY city ASC'
+      );
 
-      return cities.map(c => c.city).filter(Boolean) as string[];
+      return result.rows.map(row => row.city);
     },
     getTrendingCities: async (_: any, args: { excludeParis?: boolean; hours?: number }) => {
       const { excludeParis = true, hours = 6 } = args;
+
+      // Check cache first
+      const now = Date.now();
+      if (trendingCitiesCache && (now - trendingCitiesCache.timestamp) < TRENDING_CACHE_TTL) {
+        console.log('[getTrendingCities] Returning cached data');
+        return trendingCitiesCache.data;
+      }
+
+      console.log('[getTrendingCities] Cache miss or expired, fetching fresh data');
 
       // Calculate timestamp for N hours ago
       const hoursAgo = new Date();
       hoursAgo.setHours(hoursAgo.getHours() - hours);
 
-      const whereClause: any = {
-        timestamp: {
-          gte: hoursAgo,
-        },
-        city: {
-          not: null,
-        },
+      // Use direct DB query with GROUP BY for efficient aggregation
+      const parisExclusion = excludeParis
+        ? "AND city NOT IN ('Paris', 'paris', 'PARIS')"
+        : "";
+
+      const query = `
+        SELECT city, COUNT(*) as count
+        FROM flashes
+        WHERE timestamp >= $1
+          AND city IS NOT NULL
+          ${parisExclusion}
+        GROUP BY city
+        ORDER BY count DESC
+        LIMIT 10
+      `;
+
+      const result = await pool.query<{ city: string; count: string }>(query, [hoursAgo]);
+
+      const trendingCities = result.rows.map(row => ({
+        city: row.city,
+        count: parseInt(row.count, 10)
+      }));
+
+      // Update cache
+      trendingCitiesCache = {
+        data: trendingCities,
+        timestamp: now
       };
-
-      // Exclude Paris if requested
-      if (excludeParis) {
-        whereClause.city.notIn = ['Paris', 'paris', 'PARIS'];
-      }
-
-      // Get flashes from the last N hours, grouped by city
-      const flashes = await prisma.flashes.findMany({
-        select: {
-          city: true,
-        },
-        where: whereClause,
-      });
-
-      // Count flashes by city
-      const cityCounts: Record<string, number> = {};
-      flashes.forEach(flash => {
-        if (flash.city) {
-          cityCounts[flash.city] = (cityCounts[flash.city] || 0) + 1;
-        }
-      });
-
-      // Convert to array and sort by count (descending)
-      const trendingCities = Object.entries(cityCounts)
-        .map(([city, count]) => ({ city, count }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 10); // Return top 10
 
       return trendingCities;
     },
