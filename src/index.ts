@@ -396,23 +396,33 @@ const resolvers = {
           });
 
           users.forEach(user => {
-            farcasterDataMap.set(user.fid, {
-              username: user.username ?? `fid:${user.fid}`,
-              pfp_url: user.pfp_url ?? ""
-            });
+            if (user.username) {
+              farcasterDataMap.set(user.fid, {
+                username: user.username,
+                pfp_url: user.pfp_url ?? ""
+              });
+            }
           });
         } catch (error) {
           console.error('[getLeaderboard] Error fetching Farcaster data from Neynar:', error);
         }
       }
 
-      // Merge Farcaster data with query results
-      const leaderboardData = result.rows.map(row => ({
-        username: row.username || farcasterDataMap.get(row.fid)?.username || `fid:${row.fid}`,
-        pfp_url: row.pfp_url || farcasterDataMap.get(row.fid)?.pfp_url || null,
-        flash_count: row.flash_count,
-        city_count: row.city_count
-      }));
+      // Merge Farcaster data with query results and filter out entries without usernames
+      const leaderboardData = result.rows
+        .map(row => ({
+          username: row.username || farcasterDataMap.get(row.fid)?.username || null,
+          pfp_url: row.pfp_url || farcasterDataMap.get(row.fid)?.pfp_url || null,
+          flash_count: row.flash_count,
+          city_count: row.city_count
+        }))
+        .filter(entry => entry.username !== null)
+        .map(entry => ({
+          username: entry.username!,
+          pfp_url: entry.pfp_url,
+          flash_count: entry.flash_count,
+          city_count: entry.city_count
+        }));
 
       // Update cache
       leaderboardCache = {
