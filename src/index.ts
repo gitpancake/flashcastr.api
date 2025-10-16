@@ -356,9 +356,10 @@ const resolvers = {
       console.log('[getLeaderboard] Cache miss or expired, fetching fresh data');
 
       // Use direct DB query with aggregation for efficiency
-      // Get Farcaster username and pfp from flashcastr_flashes (not Flash Invaders username from users table)
+      // Get Farcaster username and pfp from flashcastr_flashes, with FID as fallback
       const query = `
         SELECT
+          u.fid,
           MAX(ff.user_username) as username,
           MAX(ff.user_pfp_url) as pfp_url,
           COUNT(ff.flash_id)::int as flash_count,
@@ -373,19 +374,53 @@ const resolvers = {
       `;
 
       const result = await pool.query<{
-        username: string;
+        fid: number;
+        username: string | null;
         pfp_url: string | null;
         flash_count: number;
         city_count: number
       }>(query, [validatedLimit]);
 
+      // Fetch Farcaster data for users with null usernames
+      const fidsNeedingUsernames = result.rows
+        .filter(row => !row.username && row.flash_count > 0)
+        .map(row => row.fid);
+
+      let farcasterDataMap: Map<number, { username: string; pfp_url: string }> = new Map();
+
+      if (fidsNeedingUsernames.length > 0) {
+        console.log(`[getLeaderboard] Fetching Farcaster data for ${fidsNeedingUsernames.length} users from Neynar`);
+        try {
+          const { users } = await neynarClient.fetchBulkUsers({
+            fids: fidsNeedingUsernames
+          });
+
+          users.forEach(user => {
+            farcasterDataMap.set(user.fid, {
+              username: user.username ?? `fid:${user.fid}`,
+              pfp_url: user.pfp_url ?? ""
+            });
+          });
+        } catch (error) {
+          console.error('[getLeaderboard] Error fetching Farcaster data from Neynar:', error);
+        }
+      }
+
+      // Merge Farcaster data with query results
+      const leaderboardData = result.rows.map(row => ({
+        username: row.username || farcasterDataMap.get(row.fid)?.username || `fid:${row.fid}`,
+        pfp_url: row.pfp_url || farcasterDataMap.get(row.fid)?.pfp_url || null,
+        flash_count: row.flash_count,
+        city_count: row.city_count
+      }));
+
       // Update cache
       leaderboardCache = {
-        data: result.rows,
+        data: leaderboardData,
         timestamp: now
       };
 
-      return result.rows;
+      return leaderboardData;
     },
     pollSignupStatus: async (_: any, args: { signer_uuid: string; username: string }) => {
       const { signer_uuid, username } = args;
