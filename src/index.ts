@@ -20,7 +20,7 @@ let trendingCitiesCache: { data: Array<{ city: string; count: number }>; timesta
 const TRENDING_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
 // Cache for leaderboard (1 hour TTL)
-let leaderboardCache: { data: Array<{ username: string; flash_count: number; city_count: number }>; timestamp: number } | null = null;
+let leaderboardCache: { data: Array<{ username: string; pfp_url: string | null; flash_count: number; city_count: number }>; timestamp: number } | null = null;
 const LEADERBOARD_CACHE_TTL = 60 * 60 * 1000; // 1 hour in milliseconds
 
 const typeDefs = gql`
@@ -88,6 +88,7 @@ const typeDefs = gql`
 
   type LeaderboardEntry {
     username: String!
+    pfp_url: String
     flash_count: Int!
     city_count: Int!
   }
@@ -355,22 +356,25 @@ const resolvers = {
       console.log('[getLeaderboard] Cache miss or expired, fetching fresh data');
 
       // Use direct DB query with aggregation for efficiency
+      // Get Farcaster username and pfp from flashcastr_flashes (not Flash Invaders username from users table)
       const query = `
         SELECT
-          u.username,
+          MAX(ff.user_username) as username,
+          MAX(ff.user_pfp_url) as pfp_url,
           COUNT(ff.flash_id)::int as flash_count,
           COUNT(DISTINCT f.city)::int as city_count
         FROM flashcastr_users u
         LEFT JOIN flashcastr_flashes ff ON ff.user_fid = u.fid AND ff.deleted = false
         LEFT JOIN flashes f ON f.flash_id = ff.flash_id
         WHERE u.deleted = false
-        GROUP BY u.fid, u.username
+        GROUP BY u.fid
         ORDER BY flash_count DESC, city_count DESC
         LIMIT $1
       `;
 
       const result = await pool.query<{
         username: string;
+        pfp_url: string | null;
         flash_count: number;
         city_count: number
       }>(query, [validatedLimit]);
