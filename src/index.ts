@@ -19,6 +19,10 @@ const DEFAULT_LIMIT = 20;
 let trendingCitiesCache: { data: Array<{ city: string; count: number }>; timestamp: number } | null = null;
 const TRENDING_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
+// Cache for leaderboard (1 hour TTL)
+let leaderboardCache: { data: Array<{ username: string; flash_count: number; city_count: number }>; timestamp: number } | null = null;
+const LEADERBOARD_CACHE_TTL = 60 * 60 * 1000; // 1 hour in milliseconds
+
 const typeDefs = gql`
   type User {
     fid: Int!
@@ -82,6 +86,12 @@ const typeDefs = gql`
     count: Int!
   }
 
+  type LeaderboardEntry {
+    username: String!
+    flash_count: Int!
+    city_count: Int!
+  }
+
   type Query {
     users(username: String, fid: Int): [User!]!
     flashes(page: Int, limit: Int, fid: Int, username: String, city: String): [FlashcastrFlash!]!
@@ -91,6 +101,7 @@ const typeDefs = gql`
     allFlashesPlayers(username: String): [String!]!
     getAllCities: [String!]!
     getTrendingCities(excludeParis: Boolean = true, hours: Int = 6): [TrendingCity!]!
+    getLeaderboard(limit: Int = 100): [LeaderboardEntry!]!
     pollSignupStatus(signer_uuid: String!, username: String!): PollSignupStatusResponse!
   }
 
@@ -329,6 +340,48 @@ const resolvers = {
       };
 
       return trendingCities;
+    },
+    getLeaderboard: async (_: any, args: { limit?: number }) => {
+      const { limit = 100 } = args;
+      const validatedLimit = Math.min(Math.max(1, limit), 500); // Cap at 500
+
+      // Check cache first
+      const now = Date.now();
+      if (leaderboardCache && (now - leaderboardCache.timestamp) < LEADERBOARD_CACHE_TTL) {
+        console.log('[getLeaderboard] Returning cached data');
+        return leaderboardCache.data.slice(0, validatedLimit);
+      }
+
+      console.log('[getLeaderboard] Cache miss or expired, fetching fresh data');
+
+      // Use direct DB query with aggregation for efficiency
+      const query = `
+        SELECT
+          u.username,
+          COUNT(ff.flash_id)::int as flash_count,
+          COUNT(DISTINCT f.city)::int as city_count
+        FROM flashcastr_users u
+        LEFT JOIN flashcastr_flashes ff ON ff.user_fid = u.fid AND ff.deleted = false
+        LEFT JOIN flashes f ON f.flash_id = ff.flash_id
+        WHERE u.deleted = false
+        GROUP BY u.fid, u.username
+        ORDER BY flash_count DESC, city_count DESC
+        LIMIT $1
+      `;
+
+      const result = await pool.query<{
+        username: string;
+        flash_count: number;
+        city_count: number
+      }>(query, [validatedLimit]);
+
+      // Update cache
+      leaderboardCache = {
+        data: result.rows,
+        timestamp: now
+      };
+
+      return result.rows;
     },
     pollSignupStatus: async (_: any, args: { signer_uuid: string; username: string }) => {
       const { signer_uuid, username } = args;
