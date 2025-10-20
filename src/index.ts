@@ -97,6 +97,7 @@ const typeDefs = gql`
     users(username: String, fid: Int): [User!]!
     flashes(page: Int, limit: Int, fid: Int, username: String, city: String): [FlashcastrFlash!]!
     globalFlashes(page: Int, limit: Int, city: String, player: String): [Flash!]!
+    globalFlash(flash_id: String!): Flash
     flash(id: Int!): FlashcastrFlash
     flashesSummary(fid: Int!, page: Int, limit: Int): FlashesSummary!
     allFlashesPlayers(username: String): [String!]!
@@ -233,6 +234,22 @@ const resolvers = {
         ...flash,
         flash_id: String(flash.flash_id),
       }));
+    },
+    globalFlash: async (_: any, args: { flash_id: string }) => {
+      const flash = await prisma.flashes.findUnique({
+        where: {
+          flash_id: BigInt(args.flash_id),
+        },
+      });
+
+      if (!flash) {
+        return null;
+      }
+
+      return {
+        ...flash,
+        flash_id: String(flash.flash_id),
+      };
     },
     flash: async (_: any, args: { id: number }) => {
       const flash = await prisma.flashcastr_flashes.findFirst({
