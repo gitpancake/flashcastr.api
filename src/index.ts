@@ -93,6 +93,11 @@ const typeDefs = gql`
     city_count: Int!
   }
 
+  type DailyProgress {
+    date: String!
+    count: Int!
+  }
+
   type Query {
     users(username: String, fid: Int): [User!]!
     flashes(page: Int, limit: Int, fid: Int, username: String, city: String): [FlashcastrFlash!]!
@@ -105,6 +110,7 @@ const typeDefs = gql`
     getTrendingCities(excludeParis: Boolean = true, hours: Int = 6): [TrendingCity!]!
     getLeaderboard(limit: Int = 100): [LeaderboardEntry!]!
     pollSignupStatus(signer_uuid: String!, username: String!): PollSignupStatusResponse!
+    progress(fid: Int!, days: Int!, order: String = "ASC"): [DailyProgress!]!
   }
 
   type Mutation {
@@ -526,6 +532,76 @@ const resolvers = {
           user: null,
           message: error instanceof Error ? error.message : "Failed to lookup signer on Neynar.",
         };
+      }
+    },
+    progress: async (_: any, args: { fid: number; days: number; order?: string }) => {
+      const { fid, days, order = "ASC" } = args;
+
+      // Validate days parameter (1-30)
+      if (days < 1 || days > 30) {
+        throw new GraphQLError("Days parameter must be between 1 and 30.", {
+          extensions: {
+            code: "BAD_USER_INPUT",
+            argumentName: "days",
+          },
+        });
+      }
+
+      // Validate order parameter
+      const validOrder = order.toUpperCase();
+      if (validOrder !== "ASC" && validOrder !== "DESC") {
+        throw new GraphQLError("Order parameter must be 'ASC' or 'DESC'.", {
+          extensions: {
+            code: "BAD_USER_INPUT",
+            argumentName: "order",
+          },
+        });
+      }
+
+      try {
+        // Optimized PostgreSQL query using generate_series for complete date range
+        // This approach:
+        // 1. Generates all dates in the range (max 30 rows)
+        // 2. LEFT JOINs with actual flash counts
+        // 3. Uses COALESCE to fill zeros for dates with no flashes
+        // 4. All gap-filling happens in database, not application
+        const query = `
+          WITH date_range AS (
+            SELECT generate_series(
+              date_trunc('day', NOW() - INTERVAL '${days - 1} days'),
+              date_trunc('day', NOW()),
+              '1 day'::interval
+            )::date AS date
+          ),
+          daily_counts AS (
+            SELECT
+              DATE(f.timestamp) as date,
+              COUNT(*) as count
+            FROM flashcastr_flashes ff
+            INNER JOIN flashes f ON ff.flash_id = f.flash_id
+            WHERE
+              ff.user_fid = $1
+              AND f.timestamp >= date_trunc('day', NOW() - INTERVAL '${days - 1} days')
+              AND f.timestamp < date_trunc('day', NOW()) + INTERVAL '1 day'
+              AND ff.deleted = false
+            GROUP BY DATE(f.timestamp)
+          )
+          SELECT
+            dr.date::text as date,
+            COALESCE(dc.count, 0)::int as count
+          FROM date_range dr
+          LEFT JOIN daily_counts dc ON dr.date = dc.date
+          ORDER BY dr.date ${validOrder}
+        `;
+
+        const result = await pool.query<{ date: string; count: number }>(query, [fid]);
+
+        return result.rows;
+      } catch (error) {
+        console.error(`[GraphQL progress] Error fetching progress for fid ${fid}:`, error);
+        throw new GraphQLError("Failed to fetch user progress data.", {
+          extensions: { code: "DATABASE_ERROR" },
+        });
       }
     },
   },
