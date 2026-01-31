@@ -1,3 +1,7 @@
+// Initialize tracing before all other imports
+import { initTracing } from "./utils/tracing";
+const tracingSdk = initTracing();
+
 import { Prisma, PrismaClient } from "@prisma/client";
 import { ApolloServer, gql } from "apollo-server";
 import { GraphQLError } from "graphql";
