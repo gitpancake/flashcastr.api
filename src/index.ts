@@ -9,6 +9,20 @@ import { getIpfsUrl } from "./utils/ipfs";
 import neynarClient from "./utils/neynar/client";
 import SignupOperations from "./utils/tasks/signup";
 import pool from "./utils/database/postgresClient";
+import {
+  startMetricsServer,
+  graphqlRequestsTotal,
+  graphqlErrorsTotal,
+  graphqlDurationSeconds,
+  signupsInitiatedTotal,
+  signupsCompletedTotal,
+  usersDeletedTotal,
+  cacheHitsTotal,
+  cacheMissesTotal,
+  neynarRequestsTotal,
+  activeUsersTotal,
+  totalFlashesCount,
+} from "./utils/metrics";
 
 const prisma = new PrismaClient();
 
@@ -324,11 +338,11 @@ const resolvers = {
       // Check cache first
       const now = Date.now();
       if (trendingCitiesCache && (now - trendingCitiesCache.timestamp) < TRENDING_CACHE_TTL) {
-        console.log('[getTrendingCities] Returning cached data');
+        cacheHitsTotal.inc({ cache_name: "trending_cities" });
         return trendingCitiesCache.data;
       }
 
-      console.log('[getTrendingCities] Cache miss or expired, fetching fresh data');
+      cacheMissesTotal.inc({ cache_name: "trending_cities" });
 
       // Calculate timestamp for N hours ago
       const hoursAgo = new Date();
@@ -372,11 +386,11 @@ const resolvers = {
       // Check cache first
       const now = Date.now();
       if (leaderboardCache && (now - leaderboardCache.timestamp) < LEADERBOARD_CACHE_TTL) {
-        console.log('[getLeaderboard] Returning cached data');
+        cacheHitsTotal.inc({ cache_name: "leaderboard" });
         return leaderboardCache.data.slice(0, validatedLimit);
       }
 
-      console.log('[getLeaderboard] Cache miss or expired, fetching fresh data');
+      cacheMissesTotal.inc({ cache_name: "leaderboard" });
 
       // Use direct DB query with aggregation for efficiency
       // Get Farcaster username and pfp from flashcastr_flashes, with FID as fallback
@@ -412,11 +426,12 @@ const resolvers = {
       let farcasterDataMap: Map<number, { username: string; pfp_url: string }> = new Map();
 
       if (fidsNeedingUsernames.length > 0) {
-        console.log(`[getLeaderboard] Fetching Farcaster data for ${fidsNeedingUsernames.length} users from Neynar`);
         try {
+          neynarRequestsTotal.inc({ endpoint: "fetchBulkUsers", status: "attempt" });
           const { users } = await neynarClient.fetchBulkUsers({
             fids: fidsNeedingUsernames
           });
+          neynarRequestsTotal.inc({ endpoint: "fetchBulkUsers", status: "success" });
 
           users.forEach(user => {
             if (user.username) {
@@ -427,6 +442,7 @@ const resolvers = {
             }
           });
         } catch (error) {
+          neynarRequestsTotal.inc({ endpoint: "fetchBulkUsers", status: "error" });
           console.error('[getLeaderboard] Error fetching Farcaster data from Neynar:', error);
         }
       }
@@ -472,9 +488,10 @@ const resolvers = {
         try {
           const finalizedUser = await SignupOperations.finalizeSignupProcess({
             fid: fid,
-            signer_uuid: neynar_signer_uuid, // Corrected variable name
-            flashInvadersPlayerName: flash_invaders_player_name, // Corrected variable name
+            signer_uuid: neynar_signer_uuid,
+            flashInvadersPlayerName: flash_invaders_player_name,
           });
+          signupsCompletedTotal.inc();
           return {
             status: "APPROVED_FINALIZED",
             fid: finalizedUser.fid,
@@ -497,7 +514,9 @@ const resolvers = {
       }
 
       try {
+        neynarRequestsTotal.inc({ endpoint: "lookupSigner", status: "attempt" });
         const neynarSigner = await neynarClient.lookupSigner({ signerUuid: signer_uuid });
+        neynarRequestsTotal.inc({ endpoint: "lookupSigner", status: "success" });
 
         if (neynarSigner.status === "approved" && neynarSigner.fid) {
           return await finalizeAndRespond(neynarSigner.fid, signer_uuid, username);
@@ -525,6 +544,7 @@ const resolvers = {
           };
         }
       } catch (error) {
+        neynarRequestsTotal.inc({ endpoint: "lookupSigner", status: "error" });
         console.error(`[GraphQL pollSignupStatus] Error looking up signer ${signer_uuid} on Neynar:`, error);
         return {
           status: "ERROR_NEYNAR_LOOKUP",
@@ -560,11 +580,6 @@ const resolvers = {
 
       try {
         // Optimized PostgreSQL query using generate_series for complete date range
-        // This approach:
-        // 1. Generates all dates in the range (max 30 rows)
-        // 2. LEFT JOINs with actual flash counts
-        // 3. Uses COALESCE to fill zeros for dates with no flashes
-        // 4. All gap-filling happens in database, not application
         const query = `
           WITH date_range AS (
             SELECT generate_series(
@@ -647,6 +662,7 @@ const resolvers = {
 
         await usersDb.deleteByFid(args.fid);
         await flashesDb.deleteManyByFid(args.fid);
+        usersDeletedTotal.inc();
       } catch (err) {
         console.error("[GraphQL deleteUser] Error deleting user:", err);
         return { success: false, message: "User deletion failed" };
@@ -658,11 +674,6 @@ const resolvers = {
       verifyApiKey(context);
 
       console.warn("[GraphQL signup mutation] This mutation is likely deprecated or needs rework due to the new initiateSignup/pollSignupStatus flow. Currently a no-op.");
-      // The previous problematic line was: new SignupOperations().handle({ username: args.username });
-      // This was incorrect because SignupOperations is imported as an instance, and handle() was removed.
-      // This mutation should be reviewed: if it's intended to manually finalize, it should call
-      // SignupOperations.finalizeSignupProcess({ fid: args.fid, signer_uuid: args.signer_uuid, username: args.username });
-      // For now, it remains a no-op to resolve the linter error and highlight its deprecated status.
 
       return { success: true, message: "Old signup mutation called (currently no-op - review needed)." };
     },
@@ -675,6 +686,7 @@ const resolvers = {
       }
       try {
         const result = await SignupOperations.initiateSignerCreation(username);
+        signupsInitiatedTotal.inc();
 
         return {
           signer_uuid: result.signer_uuid,
@@ -685,10 +697,34 @@ const resolvers = {
         };
       } catch (error) {
         console.error(`[GraphQL initiateSignup] Error initiating signup for ${username}:`, error);
-        if (error instanceof Error) throw error; // Rethrow GraphQL formatted errors if possible
+        if (error instanceof Error) throw error;
         throw new Error("Failed to initiate signup process due to an internal error.");
       }
     },
+  },
+};
+
+// Apollo Server plugin for metrics
+const metricsPlugin = {
+  async requestDidStart() {
+    const startTime = Date.now();
+    let operationType = "unknown";
+    let operationName = "unknown";
+
+    return {
+      async didResolveOperation(requestContext: any) {
+        operationType = requestContext.operation?.operation || "unknown";
+        operationName = requestContext.operationName || "anonymous";
+        graphqlRequestsTotal.inc({ operation_type: operationType, operation_name: operationName });
+      },
+      async willSendResponse() {
+        const duration = (Date.now() - startTime) / 1000;
+        graphqlDurationSeconds.observe({ operation_type: operationType, operation_name: operationName }, duration);
+      },
+      async didEncounterErrors(requestContext: any) {
+        graphqlErrorsTotal.inc({ operation_type: operationType, operation_name: operationName });
+      },
+    };
   },
 };
 
@@ -698,7 +734,28 @@ const server = new ApolloServer({
   introspection: true,
   context: ({ req }) => ({ req }),
   persistedQueries: false,
+  plugins: [metricsPlugin],
 });
+
+// Update user and flash counts periodically
+async function updateGauges() {
+  try {
+    const userCount = await prisma.flashcastr_users.count({ where: { deleted: false } });
+    activeUsersTotal.set(userCount);
+
+    const flashCount = await prisma.flashcastr_flashes.count({ where: { deleted: false } });
+    totalFlashesCount.set(flashCount);
+  } catch (error) {
+    console.error("[Metrics] Error updating gauges:", error);
+  }
+}
+
+// Start metrics server
+startMetricsServer(9092);
+
+// Update gauges every 60 seconds
+setInterval(updateGauges, 60000);
+updateGauges(); // Initial update
 
 server.listen({ port: 4000 }).then(async ({ url }) => {
   console.log(`🚀 Server ready at ${url}`);
