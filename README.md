@@ -340,6 +340,48 @@ const response = await fetch('http://localhost:4000/graphql', {
 const { data } = await response.json();
 ```
 
+## Observability
+
+### Prometheus Metrics
+
+The API exposes Prometheus metrics on port 9092:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /metrics` | Prometheus metrics |
+| `GET /health` | Health check |
+
+**Key metrics:**
+- `flashcastr_api_graphql_requests_total{operation_type, operation_name}` - Request count
+- `flashcastr_api_graphql_errors_total{operation_type, operation_name}` - Error count
+- `flashcastr_api_graphql_duration_seconds` - Request duration histogram
+- `flashcastr_api_signups_initiated_total` - Signup initiations
+- `flashcastr_api_signups_completed_total` - Completed signups
+- `flashcastr_api_users_deleted_total` - User deletions
+- `flashcastr_api_cache_hits_total{cache_name}` - Cache hits
+- `flashcastr_api_cache_misses_total{cache_name}` - Cache misses
+- `flashcastr_api_neynar_requests_total{endpoint, status}` - Neynar API calls
+- `flashcastr_api_active_users_total` - Active user count (gauge)
+- `flashcastr_api_total_flashes` - Total flashes (gauge)
+- `flashcastr_api_uptime_seconds` - Service uptime
+- `flashcastr_api_memory_bytes{type}` - Memory usage
+
+### Distributed Tracing
+
+The API sends distributed traces to Tempo via OpenTelemetry Protocol (OTLP).
+
+**Environment variable:**
+```env
+TEMPO_HTTP_ENDPOINT=http://tempo.railway.internal:4318/v1/traces
+```
+
+**Auto-instrumented:**
+- HTTP requests
+- GraphQL operations
+- PostgreSQL queries
+
+When `TEMPO_HTTP_ENDPOINT` is not set, tracing is disabled.
+
 ## Deployment
 
 ### Environment Setup

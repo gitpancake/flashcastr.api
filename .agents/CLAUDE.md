@@ -116,3 +116,19 @@ Metrics are exposed on port 9092:
 **flashcastr_users**: User accounts with Farcaster signer
 **flashcastr_flashes**: User-flash relationships with cast hashes
 **flashes**: Global flash data from Space Invaders API
+
+## Distributed Tracing (OpenTelemetry)
+
+The API sends distributed traces to Tempo via OpenTelemetry Protocol (OTLP).
+
+**Tracing initialization** is in `src/utils/tracing/index.ts` and must be imported at the very top of `src/index.ts` before any other imports.
+
+**Environment variable:**
+- `TEMPO_HTTP_ENDPOINT` - Tempo OTLP endpoint (e.g., `http://tempo.railway.internal:4318/v1/traces`)
+
+**Auto-instrumented:**
+- HTTP requests
+- GraphQL operations
+- PostgreSQL queries
+
+When `TEMPO_HTTP_ENDPOINT` is not set, tracing is disabled and no traces are sent.
