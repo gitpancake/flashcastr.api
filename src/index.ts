@@ -13,6 +13,7 @@ import { getIpfsUrl } from "./utils/ipfs";
 import neynarClient from "./utils/neynar/client";
 import SignupOperations from "./utils/tasks/signup";
 import pool from "./utils/database/postgresClient";
+import { flashIdentificationsResolver, flashIdentificationResolver } from "./utils/resolvers/flashIdentifications";
 import {
   startMetricsServer,
   graphqlRequestsTotal,
@@ -111,6 +112,17 @@ const typeDefs = gql`
     city_count: Int!
   }
 
+  type FlashIdentification {
+    id: Int!
+    source_ipfs_cid: String!
+    matched_flash_id: String!
+    matched_flash_name: String
+    similarity: Float!
+    confidence: Float!
+    created_at: String!
+    matched_flash: Flash
+  }
+
   type DailyProgress {
     date: String!
     count: Int!
@@ -129,6 +141,8 @@ const typeDefs = gql`
     getLeaderboard(limit: Int = 100): [LeaderboardEntry!]!
     pollSignupStatus(signer_uuid: String!, username: String!): PollSignupStatusResponse!
     progress(fid: Int!, days: Int!, order: String = "ASC"): [DailyProgress!]!
+    flashIdentifications(ipfs_cid: String, matched_flash_id: String, limit: Int = 50): [FlashIdentification!]!
+    flashIdentification(id: Int!): FlashIdentification
   }
 
   type Mutation {
@@ -623,6 +637,8 @@ const resolvers = {
         });
       }
     },
+    flashIdentifications: flashIdentificationsResolver,
+    flashIdentification: flashIdentificationResolver,
   },
   Mutation: {
     setUserAutoCast: async (_: any, args: { fid: number; auto_cast: boolean }, context: any) => {
