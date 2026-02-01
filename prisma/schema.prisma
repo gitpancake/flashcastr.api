@@ -36,15 +36,16 @@ model flashcastr_users {
 }
 
 model flashes {
-  flash_id           BigInt              @id @unique(map: "idx_flashes_flash_id")
-  city               String?
-  player             String?
-  img                String?
-  ipfs_cid           String?
-  text               String?
-  timestamp          DateTime?           @db.Timestamp(6)
-  flash_count        String?
-  flashcastr_flashes flashcastr_flashes?
+  flash_id              BigInt                  @id @unique(map: "idx_flashes_flash_id")
+  city                  String?
+  player                String?
+  img                   String?
+  ipfs_cid              String?
+  text                  String?
+  timestamp             DateTime?               @db.Timestamp(6)
+  flash_count           String?
+  flashcastr_flashes    flashcastr_flashes?
+  flash_identifications flash_identifications[]
 
   @@index([city], map: "idx_flashes_city")
   @@index([city, player, timestamp(sort: Desc)], map: "idx_flashes_city_player_timestamp_desc")
@@ -54,3 +55,16 @@ model flashes {
   @@index([timestamp], map: "idx_flashes_timestamp")
 }
 
+model flash_identifications {
+  id                 Int      @id @default(autoincrement())
+  source_ipfs_cid    String
+  matched_flash_id   BigInt
+  matched_flash_name String?
+  similarity         Float
+  confidence         Float
+  created_at         DateTime @default(now())
+  flashes            flashes  @relation(fields: [matched_flash_id], references: [flash_id], onUpdate: NoAction)
+
+  @@index([source_ipfs_cid], map: "idx_flash_identifications_source")
+  @@index([matched_flash_id], map: "idx_flash_identifications_matched")
+}
