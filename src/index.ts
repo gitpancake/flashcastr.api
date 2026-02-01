@@ -14,6 +14,7 @@ import neynarClient from "./utils/neynar/client";
 import SignupOperations from "./utils/tasks/signup";
 import pool from "./utils/database/postgresClient";
 import { flashIdentificationsResolver, flashIdentificationResolver } from "./utils/resolvers/flashIdentifications";
+import { unifiedFlashResolver, unifiedFlashesResolver } from "./utils/resolvers/unifiedFlash";
 import {
   startMetricsServer,
   graphqlRequestsTotal,
@@ -128,6 +129,34 @@ const typeDefs = gql`
     count: Int!
   }
 
+  type FarcasterUser {
+    fid: Int!
+    username: String
+    pfp_url: String
+    cast_hash: String
+  }
+
+  type FlashIdentificationInfo {
+    id: Int!
+    matched_flash_id: String!
+    matched_flash_name: String
+    similarity: Float!
+    confidence: Float!
+  }
+
+  type UnifiedFlash {
+    flash_id: ID!
+    city: String
+    player: String
+    img: String
+    ipfs_cid: String
+    text: String
+    timestamp: String
+    flash_count: String
+    farcaster_user: FarcasterUser
+    identification: FlashIdentificationInfo
+  }
+
   type Query {
     users(username: String, fid: Int): [User!]!
     flashes(page: Int, limit: Int, fid: Int, username: String, city: String): [FlashcastrFlash!]!
@@ -143,6 +172,8 @@ const typeDefs = gql`
     progress(fid: Int!, days: Int!, order: String = "ASC"): [DailyProgress!]!
     flashIdentifications(ipfs_cid: String, matched_flash_id: String, limit: Int = 50): [FlashIdentification!]!
     flashIdentification(id: Int!): FlashIdentification
+    unifiedFlash(flash_id: String!): UnifiedFlash
+    unifiedFlashes(page: Int, limit: Int, city: String, player: String): [UnifiedFlash!]!
   }
 
   type Mutation {
@@ -150,6 +181,7 @@ const typeDefs = gql`
     deleteUser(fid: Int!): DeleteUserResponse!
     signup(fid: Int!, signer_uuid: String!, username: String!): SignupResponse!
     initiateSignup(username: String!): InitiateSignupResponse!
+    saveFlashIdentification(source_ipfs_cid: String!, matched_flash_id: String!, matched_flash_name: String, similarity: Float!, confidence: Float!): FlashIdentificationInfo
   }
 `;
 
@@ -639,6 +671,8 @@ const resolvers = {
     },
     flashIdentifications: flashIdentificationsResolver,
     flashIdentification: flashIdentificationResolver,
+    unifiedFlash: unifiedFlashResolver,
+    unifiedFlashes: unifiedFlashesResolver,
   },
   Mutation: {
     setUserAutoCast: async (_: any, args: { fid: number; auto_cast: boolean }, context: any) => {
@@ -719,6 +753,28 @@ const resolvers = {
         console.error(`[GraphQL initiateSignup] Error initiating signup for ${username}:`, error);
         if (error instanceof Error) throw error;
         throw new Error("Failed to initiate signup process due to an internal error.");
+      }
+    },
+    saveFlashIdentification: async (_: any, args: { source_ipfs_cid: string; matched_flash_id: string; matched_flash_name?: string; similarity: number; confidence: number }) => {
+      try {
+        const result = await pool.query(
+          `INSERT INTO flash_identifications (source_ipfs_cid, matched_flash_id, matched_flash_name, similarity, confidence)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (source_ipfs_cid) DO UPDATE SET
+             matched_flash_id = EXCLUDED.matched_flash_id,
+             matched_flash_name = EXCLUDED.matched_flash_name,
+             similarity = EXCLUDED.similarity,
+             confidence = EXCLUDED.confidence,
+             created_at = CURRENT_TIMESTAMP
+           RETURNING id, matched_flash_id::text, matched_flash_name, similarity, confidence`,
+          [args.source_ipfs_cid, args.matched_flash_id, args.matched_flash_name || null, args.similarity, args.confidence]
+        );
+        return result.rows[0];
+      } catch (error) {
+        console.error("[GraphQL saveFlashIdentification] Error:", error);
+        throw new GraphQLError("Failed to save flash identification.", {
+          extensions: { code: "DATABASE_ERROR" },
+        });
       }
     },
   },
